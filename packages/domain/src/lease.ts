@@ -35,30 +35,9 @@ export type ApprovalGrant = {
   readonly callId: CallId;
 };
 
-// The effect class decides recovery: a read reruns, an idempotent write reruns with the same hash,
-// and an external effect is never sent twice.
-export const toolEffects = {
-  "read-market": "read",
-  "write-note": "idempotent-write",
-  "place-order": "external",
-} as const;
-
-export type ToolName = keyof typeof toolEffects;
-export type ToolEffectClass = (typeof toolEffects)[ToolName];
-
-export type ToolNameFor<Effect extends ToolEffectClass> = {
-  [Name in ToolName]: (typeof toolEffects)[Name] extends Effect ? Name : never;
-}[ToolName];
-
-export type ResearchBrief = {
-  question: string;
-  horizon: string;
-};
-
-export type CheckedBrief = {
-  question: NonEmptyString;
-  horizon: NonEmptyString;
-};
+// 效应分类决定恢复策略：read 重新执行，idempotent-write 用相同 hash 重新执行，
+// external 最多发送一次。具体工具名由扩展自行声明，域层只定义分类本身。
+export type EffectClass = "read" | "idempotent-write" | "external";
 
 /** Every command names its tenant: one storage holds every tenant's sessions as rows. */
 export type AgentCommand =
@@ -66,7 +45,8 @@ export type AgentCommand =
       kind: "start";
       tenantId: TenantId;
       idempotencyKey: string;
-      brief: ResearchBrief;
+      /** 提交给模型的完整输入文本。扩展自行决定如何在其 system prompt 中解读这段内容。 */
+      input: string;
       sessionId?: SessionId;
       threadId?: string;
       /** `provider/id`; resolved against the catalog of the agent that runs it. */
@@ -102,7 +82,7 @@ export type RunStatus =
       runId: RunId;
       callId: CallId;
       operationId: OperationId;
-      tool: ToolNameFor<"external">;
+      tool: string;
     }
   | { kind: "needs-resume"; runId: RunId }
   | { kind: "completed"; runId: RunId; text: string }
@@ -146,38 +126,37 @@ export type ResearchAgent = {
 
 export type ReplayableIntent =
   | {
-      kind: Extract<ToolEffectClass, "read">;
-      name: ToolNameFor<"read">;
+      kind: "read";
+      name: string;
       symbol: string;
     }
   | {
-      kind: Extract<ToolEffectClass, "idempotent-write">;
-      name: ToolNameFor<"idempotent-write">;
+      kind: "idempotent-write";
+      name: string;
       path: WorkspacePath;
       content: string;
       contentHash: ContentHash;
     };
 
 export type ExternalIntent = {
-  kind: Extract<ToolEffectClass, "external">;
-  name: ToolNameFor<"external">;
+  kind: "external";
+  name: string;
   operationId: OperationId;
-  symbol: string;
-  side: "buy" | "sell";
-  quantity: string;
+  /** 工具调用的原始参数，用于审批展示与 sandbox 分发。 */
+  args: Record<string, string>;
 };
 
 export type ToolIntent = ReplayableIntent | ExternalIntent;
 
 export type ReplayableEffect =
-  | { kind: Extract<ToolEffectClass, "read"> }
+  | { kind: "read" }
   | {
-      kind: Extract<ToolEffectClass, "idempotent-write">;
+      kind: "idempotent-write";
       contentHash: ContentHash;
     };
 
 export type ExternalEffect = {
-  kind: Extract<ToolEffectClass, "external">;
+  kind: "external";
   operationId: OperationId;
   approval: ApprovalGrant;
 };
@@ -202,7 +181,33 @@ export type ExternalLease = {
   task: ExternalIntent;
 };
 
-export type Lease = ReplayableLease | ExternalLease;
+/**
+ * 代码执行：shell、Python 等不放进 agent 循环本身的计算，转发到独立 sandbox 执行。
+ * 代码以内容 hash 标识，相同代码重新执行得到相同结果，因此 replay 标记为 safe。
+ */
+export type ComputeIntent = {
+  kind: "compute";
+  name: string;
+  language: string;
+  code: string;
+  contentHash: ContentHash;
+};
+
+export type ComputeEffect = {
+  kind: "compute";
+  contentHash: ContentHash;
+};
+
+export type ComputeLease = {
+  kind: "compute";
+  leaseId: LeaseId;
+  workspace: WorkspaceRef;
+  deadlineAt: Timestamp;
+  effect: ComputeEffect;
+  task: ComputeIntent;
+};
+
+export type Lease = ReplayableLease | ExternalLease | ComputeLease;
 
 export type LeaseResult =
   | { kind: "ok"; text: string }
@@ -291,6 +296,21 @@ export function leaseExternal(input: {
     workspace: input.workspace,
     deadlineAt: leaseDeadline(input.now),
     effect: { kind: "external", operationId: input.intent.operationId, approval: input.approval },
+    task: input.intent,
+  };
+}
+
+export function leaseCompute(input: {
+  workspace: WorkspaceRef;
+  intent: ComputeIntent;
+  now: Timestamp;
+}): ComputeLease {
+  return {
+    kind: "compute",
+    leaseId: freshId("LeaseId"),
+    workspace: input.workspace,
+    deadlineAt: leaseDeadline(input.now),
+    effect: { kind: "compute", contentHash: input.intent.contentHash },
     task: input.intent,
   };
 }

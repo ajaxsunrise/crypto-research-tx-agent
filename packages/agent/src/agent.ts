@@ -55,7 +55,7 @@ function orderIn(tx: Tx, operationId: string) {
 }
 
 /** An order outcome as a transcript entry, appended in the commit that closes the order. */
-const orderResultKind = "crypto.order-result";
+const orderResultKind = "agent.order-result";
 
 export type AgentOptions = {
   harness: Harness;
@@ -105,7 +105,20 @@ function isExternalResult(value: unknown): value is ExternalResult {
 }
 
 /** The transcript a client sees, derived from pi-durable entries. */
-function transcriptOf(entries: readonly EntryRecord[]): TranscriptItem[] {
+function transcriptOf(
+  entries: readonly EntryRecord[],
+  suppressCallIds: ReadonlySet<string>,
+): TranscriptItem[] {
+  // order-result 条目覆盖同一 callId 的 pi-durable toolResult，所以先收集已覆盖的 callId 集合。
+  const coveredCallIds = new Set<string>(suppressCallIds);
+  for (const entry of entries) {
+    if (entry.kind === orderResultKind) {
+      const data = entry.data as { callId?: string } | undefined;
+      if (data?.callId !== undefined) {
+        coveredCallIds.add(data.callId);
+      }
+    }
+  }
   const items: TranscriptItem[] = [];
   for (const entry of entries) {
     if (entry.kind === orderResultKind) {
@@ -138,8 +151,8 @@ function transcriptOf(entries: readonly EntryRecord[]): TranscriptItem[] {
           }
         }
       } else if (message.role === "toolResult") {
-        // 审批等待结果由 order-result 记录提供；工具验证错误保留在 transcript。
-        if (message.toolName === "place-order" && !message.isError) {
+        // 审批等待结果由 order-result 记录提供；此 callId 已被覆盖（已关闭或仍待处理）的 toolResult 跳过。
+        if (coveredCallIds.has(message.toolCallId) && !message.isError) {
           continue;
         }
         const text = textOf(message.content);
@@ -262,7 +275,7 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
         runId,
         callId: brand(parked.callId, "CallId"),
         operationId: brand(parked.operationId, "OperationId"),
-        tool: "place-order",
+        tool: parked.toolName,
       };
     }
     if (busy.has(conversationId)) {
@@ -277,11 +290,16 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
     const state = await conversation.viewState(context);
     try {
       const entries = state.value?.entries ?? [];
+      const orders = await openOrdersOf(conversation.id);
+      // 未关闭订单的 callId 也需要压制 pi-durable 的 toolResult（它只是停靠提示，不是最终结果）。
+      const pendingCallIds = new Set(
+        orders.filter((o) => o.phase !== "closed").map((o) => o.callId),
+      );
       return {
         sessionId: sessionIdOf(conversation.id),
         head: entries.length,
         status: await statusOf(conversation.id, await runOf(conversation.id)),
-        transcript: transcriptOf(entries),
+        transcript: transcriptOf(entries, pendingCallIds),
       };
     } finally {
       state.dispose();
@@ -440,14 +458,13 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
 
   async function start(command: Extract<AgentCommand, { kind: "start" }>): Promise<ExecuteResult> {
     const key = nonEmpty(command.idempotencyKey);
-    const question = nonEmpty(command.brief?.question);
-    const horizon = nonEmpty(command.brief?.horizon);
-    if (key === undefined || question === undefined || horizon === undefined) {
+    const input = nonEmpty(command.input);
+    if (key === undefined || input === undefined) {
       return {
         kind: "rejected",
         rejection: {
           kind: "invalid-request",
-          message: "idempotencyKey, question, and horizon must be non-empty.",
+          message: "idempotencyKey and input must be non-empty.",
         },
       };
     }
@@ -557,7 +574,7 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
         conversationId = targetId;
       }
       started.conversationId = conversationId;
-      started.input = `${question}\nHorizon: ${horizon}`;
+      started.input = input;
       started.model = storedModelOf(model);
       if (thread !== undefined) {
         thread.conversationId = conversationId;
@@ -741,11 +758,9 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
         workspace: workspaceFor(conversation.id),
         intent: {
           kind: "external",
-          name: "place-order",
+          name: order.toolName,
           operationId,
-          symbol: order.symbol,
-          side: order.side,
-          quantity: order.quantity,
+          args: order.args,
         },
         approval: issueGrant(operationId, brand(order.callId, "CallId") as CallId),
         now: now(),

@@ -4,6 +4,7 @@ import {
   brand,
   type ApprovalGrant,
   type CallId,
+  type ComputeIntent,
   type ContentHash,
   type ExternalIntent,
   type NonEmptyString,
@@ -30,8 +31,7 @@ export function writeIntent(path: string, content: string): ReplayableIntent {
   };
 }
 
-// The operation id is minted by the caller, never taken from the model, so a model cannot replay an
-// earlier order by reusing its id.
+// operationId 由调用方生成，不由模型提供，从而防止模型用旧 id 重放历史订单。
 export function orderIntent(
   order: { symbol: string; side: "buy" | "sell"; quantity: string },
   operationId: OperationId,
@@ -40,10 +40,14 @@ export function orderIntent(
     kind: "external",
     name: "place-order",
     operationId,
-    symbol: order.symbol,
-    side: order.side,
-    quantity: order.quantity,
+    args: { symbol: order.symbol, side: order.side, quantity: order.quantity },
   };
+}
+
+// computeIntent 供代码执行工具使用；contentHash 保证相同代码产生相同的 replay key。
+export function computeIntent(language: string, code: string, toolName: string): ComputeIntent {
+  const contentHash = hashContent(code);
+  return { kind: "compute", name: toolName, language, code, contentHash };
 }
 
 // Only the approval path issues a grant; nothing else can build an external lease without one.

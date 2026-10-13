@@ -42,7 +42,7 @@ const started = await agent.execute({
   kind: "start",
   tenantId: crashTenant,
   idempotencyKey: "crash",
-  brief: { question: "What changed?", horizon: "24h" },
+  input: "What changed?\nHorizon: 24h",
 });
 // For an order the run parks; approving it is what reaches the sandbox.
 if (

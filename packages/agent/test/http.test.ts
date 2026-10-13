@@ -148,7 +148,7 @@ test("the page is served from WEB_DIST", async () => {
   }
 });
 
-test("a missing horizon is rejected before the stream starts", async () => {
+test("a missing user message is rejected before the stream starts", async () => {
   const { models, model } = scripted([say("unused")]);
   const agent = await createResearchAgent({ models, model });
   const app = createAgentHttp({
@@ -165,11 +165,11 @@ test("a missing horizon is rejected before the stream starts", async () => {
     const response = await postRun(server.url, {
       threadId: "thread-1",
       runId: "run-1",
-      messages: [{ id: "user-1", role: "user", content: "hello" }],
+      messages: [],
     });
     assert.equal(response.status, 400);
     const body: unknown = await response.json();
-    assert.deepEqual(body, { message: "A run needs a user message and forwardedProps.horizon." });
+    assert.deepEqual(body, { message: "A run needs a user message." });
   } finally {
     await server.close();
     await agent.close();

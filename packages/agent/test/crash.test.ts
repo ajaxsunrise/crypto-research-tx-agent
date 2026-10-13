@@ -16,7 +16,7 @@ import {
   view,
 } from "./fixtures.js";
 
-const brief = { question: "What changed?", horizon: "24h" };
+const brief = "What changed?\nHorizon: 24h";
 
 test("a read interrupted by a dead process reruns on resume", async () => {
   const directory = mkdtempSync(join(tmpdir(), "crx-crash-read-"));
@@ -46,7 +46,7 @@ test("a read interrupted by a dead process reruns on resume", async () => {
           kind: "start",
           tenantId: crashTenant,
           idempotencyKey: "crash",
-          brief,
+          input: brief,
         }),
       );
       const resumed = view(
@@ -88,7 +88,7 @@ test("an order interrupted by a dead process is never sent again", async () => {
           kind: "start",
           tenantId: crashTenant,
           idempotencyKey: "crash",
-          brief,
+          input: brief,
         }),
       );
       assert.equal(found.status.kind, "needs-resume");

@@ -9,13 +9,13 @@ import type { Models } from "@earendil-works/pi-ai";
 import {
   createRegistry,
   Harness,
+  type Extension,
   type HarnessSettings,
   type ModelRef,
   type Storage,
 } from "@earendil-works/pi-durable";
 
 import { createAgent } from "./agent.js";
-import { researchExtension } from "./research.js";
 
 export type ModelChoice = string | ModelRef;
 
@@ -53,6 +53,8 @@ export async function openAgent(input: {
   storage: Storage;
   models: Models;
   sandbox: LeaseExecutor;
+  /** 扩展列表，每个扩展提供工具、system prompt 和 hook。调用方决定加载哪些扩展。 */
+  extensions: readonly Extension[];
   /** The model a start runs with when it does not name one. */
   model?: ModelChoice;
   now?: () => Timestamp;
@@ -68,7 +70,9 @@ export async function openAgent(input: {
   const model = resolveModel(input.models, input.model);
   const now = input.now ?? (() => brand(Date.now(), "Timestamp"));
   const registry = createRegistry();
-  registry.install(researchExtension({ sandbox: input.sandbox, now }));
+  for (const ext of input.extensions) {
+    registry.install(ext);
+  }
 
   const harness = await Harness.open(
     input.storage,

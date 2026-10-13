@@ -6,7 +6,7 @@ import { z } from "zod";
 
 export type TenantAuthenticator = (request: Request) => TenantId | undefined;
 
-const tokenConfig = z.record(z.string().min(32).regex(/^\S+$/));
+const tokenConfig = z.record(z.string(), z.string().min(32).regex(/^\S+$/));
 
 function digest(token: string): Buffer {
   return createHash("sha256").update(token).digest();

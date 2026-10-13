@@ -10,11 +10,12 @@ import {
 } from "@crypto/storage-postgres";
 import type { Models } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import type { HarnessSettings } from "@earendil-works/pi-durable";
+import type { Extension, HarnessSettings } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import pg from "pg";
 
 import { openAgent, type ModelChoice, type OpenedAgent } from "./open.js";
+import { researchExtension } from "./research.js";
 
 /** Another worker owns this storage. Route the request to that worker or stop it first. */
 export class StorageBusy extends Error {
@@ -75,11 +76,14 @@ export async function openAgentWorker(options: AgentWorkerOptions): Promise<Agen
     const models =
       typeof options.models === "function" ? options.models() : (options.models ?? builtinModels());
     const sandbox = options.sandbox ?? createSandbox(options.sandboxRoot, options.now);
+    const now = options.now ?? (() => Date.now() as Timestamp);
+    const extensions: Extension[] = [researchExtension({ sandbox, now })];
 
     return await openAgent({
       storage,
       models,
       sandbox,
+      extensions,
       model: options.model,
       now: options.now,
       settings: options.settings,

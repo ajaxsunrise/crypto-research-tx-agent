@@ -8,3 +8,6 @@ allowBuilds:
   "@google/genai": false
   esbuild: false
   protobufjs: false
+
+minimumReleaseAgeExclude:
+  - zod@4.6.7

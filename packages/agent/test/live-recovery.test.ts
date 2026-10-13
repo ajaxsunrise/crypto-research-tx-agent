@@ -49,15 +49,14 @@ function awaiting(session: SessionView) {
 }
 
 function orderBrief() {
-  return {
-    question: [
+  return (
+    [
       "Call place-order exactly once with symbol BTC-USDT, side buy, quantity 0.0001.",
       "Call place-order alone in one response containing no other tool calls.",
       "The order requires human approval. Stop after making the approval request.",
       "After receiving its approval result, describe that result in one sentence and call no tools.",
-    ].join(" "),
-    horizon: "24h",
-  };
+    ].join(" ") + "\nHorizon: 24h"
+  );
 }
 
 async function setup(t: TestContext) {
@@ -166,7 +165,7 @@ test(
         tenantId: alpha,
         idempotencyKey: "shared-key",
         threadId,
-        brief: orderBrief(),
+        input: orderBrief(),
       }),
     );
     const deniedOrder = awaiting(deniedStart);
@@ -197,7 +196,7 @@ test(
         tenantId: beta,
         idempotencyKey: "shared-key",
         threadId,
-        brief: { question: "Reply with two words about crypto. Call no tools.", horizon: "24h" },
+        input: "Reply with two words about crypto. Call no tools.\nHorizon: 24h",
       }),
     );
     assert.equal(other.status.kind, "completed");
@@ -247,7 +246,7 @@ test(
         tenantId: alpha,
         idempotencyKey: "grant",
         threadId: grantThread,
-        brief: orderBrief(),
+        input: orderBrief(),
       }),
     );
     const grantOrder = awaiting(grantStart);
@@ -289,7 +288,7 @@ test(
         tenantId: alpha,
         idempotencyKey: "cancel",
         threadId: randomUUID(),
-        brief: orderBrief(),
+        input: orderBrief(),
       }),
     );
     const cancelOrder = awaiting(cancelStart);
@@ -322,7 +321,7 @@ test(
         tenantId: alpha,
         idempotencyKey: "close",
         threadId: randomUUID(),
-        brief: orderBrief(),
+        input: orderBrief(),
       }),
     );
     const closeOrder = awaiting(closeStart);
@@ -413,10 +412,7 @@ test(
         tenantId: alpha,
         idempotencyKey: "pending",
         threadId,
-        brief: {
-          question: "Reply with one sentence about Bitcoin. Call no tools.",
-          horizon: "24h",
-        },
+        input: "Reply with one sentence about Bitcoin. Call no tools.\nHorizon: 24h",
       });
       let sessionId: SessionId | undefined;
       const deadline = Date.now() + 20_000;
@@ -458,10 +454,7 @@ test(
           tenantId: alpha,
           idempotencyKey: "pending",
           threadId,
-          brief: {
-            question: "Reply with one sentence about Bitcoin. Call no tools.",
-            horizon: "24h",
-          },
+          input: "Reply with one sentence about Bitcoin. Call no tools.\nHorizon: 24h",
         }),
       );
       assert.deepEqual(retried, recovered);

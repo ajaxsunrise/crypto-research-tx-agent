@@ -178,16 +178,17 @@ async function startRun(
   ready: Extract<Ready, { kind: "start" }>,
 ) {
   const question = ready.run.question;
-  const horizon = ready.run.horizon;
-  if (question === undefined || horizon === undefined) {
-    throw new Error("A run needs a user message and forwardedProps.horizon.");
+  if (question === undefined) {
+    throw new Error("A run needs a user message.");
   }
+  const horizon = ready.run.horizon;
+  const input = horizon !== undefined ? `${question}\nHorizon: ${horizon}` : question;
   return execute(options, {
     kind: "start",
     tenantId,
     idempotencyKey: JSON.stringify([ready.run.threadId, ready.run.runId]),
     threadId: ready.run.threadId,
-    brief: { question, horizon },
+    input,
     model: ready.model,
     ...(ready.sessionId === undefined ? {} : { sessionId: ready.sessionId }),
   });

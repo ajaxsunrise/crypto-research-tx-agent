@@ -104,10 +104,10 @@ export function parseRun(value: unknown): ParseRunResult {
   }
   const question = lastQuestion(input);
   const horizon = trimmed(props.horizon);
-  if (resume === undefined && (question === undefined || horizon === undefined)) {
+  if (resume === undefined && question === undefined) {
     return {
       kind: "invalid",
-      message: "A run needs a user message and forwardedProps.horizon.",
+      message: "A run needs a user message.",
     };
   }
   return {

@@ -8,6 +8,7 @@ import { MemoryStorage, type HarnessSettings } from "@earendil-works/pi-durable"
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
 import { openAgent, type ModelChoice, type OpenedAgent } from "./open.js";
+import { researchExtension } from "./research.js";
 
 /**
  * A local agent for development and tests: SQLite in `directory`, or memory without one. Cloud
@@ -24,18 +25,21 @@ export async function createResearchAgent(input?: {
   now?: () => Timestamp;
 }): Promise<OpenedAgent> {
   const directory = input?.directory;
+  const now = input?.now;
   const storage =
     directory === undefined
       ? new MemoryStorage()
       : await openNodeSqliteStorage(join(directory, "session.sqlite"));
+  const sandbox =
+    input?.sandbox ??
+    createSandbox(directory === undefined ? undefined : join(directory, "sandbox"), now);
   return openAgent({
     storage,
     models: input?.models ?? builtinModels(),
-    sandbox:
-      input?.sandbox ??
-      createSandbox(directory === undefined ? undefined : join(directory, "sandbox"), input?.now),
+    sandbox,
+    extensions: [researchExtension({ sandbox, now: now ?? (() => Date.now() as Timestamp) })],
     model: input?.model,
-    now: input?.now,
+    now,
     settings: input?.settings,
     resumeOnOpen: input?.resumeOnOpen,
   });
@@ -55,7 +59,6 @@ export type {
   OperationId,
   Rejection,
   ResearchAgent,
-  ResearchBrief,
   RunStatus,
   SessionId,
   SessionView,

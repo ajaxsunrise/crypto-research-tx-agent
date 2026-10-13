@@ -54,7 +54,7 @@ function open(replies: Reply[], extra: Partial<AgentWorkerOptions> = {}) {
   });
 }
 
-const brief = (question: string) => ({ question, horizon: "24h" });
+const brief = (question: string) => `${question}\nHorizon: 24h`;
 
 test("two tenants in one worker own separate sessions", { skip }, async () => {
   const worker = await open([say("answer for a"), say("answer for b")]);
@@ -66,7 +66,7 @@ test("two tenants in one worker own separate sessions", { skip }, async () => {
         kind: "start",
         tenantId: alpha,
         idempotencyKey: "same-key",
-        brief: brief("question a"),
+        input: brief("question a"),
       }),
     );
     const b = view(
@@ -74,7 +74,7 @@ test("two tenants in one worker own separate sessions", { skip }, async () => {
         kind: "start",
         tenantId: beta,
         idempotencyKey: "same-key",
-        brief: brief("question b"),
+        input: brief("question b"),
       }),
     );
     // One idempotency key per tenant, one session per tenant, in the one shared schema.
@@ -129,7 +129,7 @@ test("a dead worker's storage is taken over and its order is not resent", { skip
         kind: "start",
         tenantId: crashTenant,
         idempotencyKey: "crash",
-        brief: brief("x"),
+        input: brief("x"),
       }),
     );
     assert.equal(found.status.kind, "needs-resume");

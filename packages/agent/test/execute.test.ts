@@ -27,7 +27,7 @@ function view(result: ExecuteResult): SessionView {
   return result.view;
 }
 
-const brief = { question, horizon: "24h" };
+const brief = `${question}\nHorizon: 24h`;
 
 test("an unknown model is rejected before a run starts", async () => {
   const { models } = scripted([]);
@@ -46,7 +46,7 @@ test("a start naming a model the catalog does not know is rejected", async () =>
       kind: "start",
       tenantId: tenant,
       idempotencyKey: "model",
-      brief,
+      input: brief,
       model: "nope/nope",
     });
     if (result.kind !== "rejected" || result.rejection.kind !== "invalid-request") {
@@ -69,7 +69,7 @@ test("two tenants in one agent own separate sessions", async () => {
         kind: "start",
         tenantId: alpha,
         idempotencyKey: "same-key",
-        brief: { question: "question a", horizon: "24h" },
+        input: "question a\nHorizon: 24h",
       }),
     );
     const b = view(
@@ -77,7 +77,7 @@ test("two tenants in one agent own separate sessions", async () => {
         kind: "start",
         tenantId: beta,
         idempotencyKey: "same-key",
-        brief: { question: "question b", horizon: "24h" },
+        input: "question b\nHorizon: 24h",
       }),
     );
     // One idempotency key per tenant: the same key starts two sessions.
@@ -91,7 +91,7 @@ test("two tenants in one agent own separate sessions", async () => {
         kind: "start",
         tenantId: beta,
         idempotencyKey: "same-key",
-        brief: { question: "question b again", horizon: "24h" },
+        input: "question b again\nHorizon: 24h",
       }),
     );
     assert.equal(retry.sessionId, b.sessionId);
@@ -110,7 +110,7 @@ test("two starts with one key keep the same session and run once", async () => {
   const agent = await createResearchAgent({ models, model });
   try {
     const first = view(
-      await agent.execute({ kind: "start", tenantId: tenant, idempotencyKey: "k", brief }),
+      await agent.execute({ kind: "start", tenantId: tenant, idempotencyKey: "k", input: brief }),
     );
     assert.equal(first.status.kind, "completed");
     if (first.status.kind === "completed") {
@@ -123,7 +123,7 @@ test("two starts with one key keep the same session and run once", async () => {
         kind: "start",
         tenantId: tenant,
         idempotencyKey: "k",
-        brief: { question: "A different question", horizon: "1h" },
+        input: "A different question\nHorizon: 1h",
       }),
     );
     assert.equal(second.sessionId, first.sessionId);
@@ -143,7 +143,7 @@ test("two starts with one key keep the same session and run once", async () => {
   }
 });
 
-test("an empty brief is rejected", async () => {
+test("an empty input is rejected", async () => {
   const { models, model } = scripted([]);
   const agent = await createResearchAgent({ models, model });
   try {
@@ -151,7 +151,7 @@ test("an empty brief is rejected", async () => {
       kind: "start",
       tenantId: tenant,
       idempotencyKey: "k",
-      brief: { question: " ", horizon: "24h" },
+      input: "   ",
     });
     assert.equal(result.kind, "rejected");
   } finally {
@@ -171,7 +171,12 @@ test("a read-market call reads once through the sandbox and completes", async ()
   const agent = await createResearchAgent({ models, model, sandbox });
   try {
     const started = view(
-      await agent.execute({ kind: "start", tenantId: tenant, idempotencyKey: "read", brief }),
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "read",
+        input: brief,
+      }),
     );
     assert.equal(started.status.kind, "completed");
     assert.equal(leases.length, 1);
@@ -199,7 +204,12 @@ test("place-order parks for approval and one grant sends it once", async () => {
   const agent = await createResearchAgent({ models, model, sandbox });
   try {
     const started = view(
-      await agent.execute({ kind: "start", tenantId: tenant, idempotencyKey: "order", brief }),
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "order",
+        input: brief,
+      }),
     );
     if (started.status.kind !== "awaiting-approval") {
       assert.fail(`expected awaiting-approval, got ${started.status.kind}`);
@@ -272,7 +282,12 @@ test("deny closes the order without calling the sandbox", async () => {
   const agent = await createResearchAgent({ models, model, sandbox });
   try {
     const started = view(
-      await agent.execute({ kind: "start", tenantId: tenant, idempotencyKey: "deny", brief }),
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "deny",
+        input: brief,
+      }),
     );
     if (started.status.kind !== "awaiting-approval") {
       assert.fail("expected the order to park");
@@ -314,7 +329,12 @@ test("a sandbox failure during an order is reported interrupted on resume, never
   const agent = await createResearchAgent({ models, model, sandbox });
   try {
     const started = view(
-      await agent.execute({ kind: "start", tenantId: tenant, idempotencyKey: "lost", brief }),
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "lost",
+        input: brief,
+      }),
     );
     if (started.status.kind !== "awaiting-approval") {
       assert.fail("expected the order to park");
@@ -359,7 +379,12 @@ test("cancel closes an open run once and never sends its order", async () => {
   const agent = await createResearchAgent({ models, model, sandbox });
   try {
     const started = view(
-      await agent.execute({ kind: "start", tenantId: tenant, idempotencyKey: "cancel", brief }),
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "cancel",
+        input: brief,
+      }),
     );
     assert.equal(started.status.kind, "awaiting-approval");
     const cancelled = view(
@@ -383,7 +408,12 @@ test("a provider error closes the run as failed", async () => {
   const agent = await createResearchAgent({ models, model, settings: noRetry });
   try {
     const started = view(
-      await agent.execute({ kind: "start", tenantId: tenant, idempotencyKey: "fail", brief }),
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "fail",
+        input: brief,
+      }),
     );
     assert.equal(started.status.kind, "failed");
   } finally {
@@ -396,14 +426,14 @@ test("a later run in the same session sees the earlier transcript", async () => 
   const agent = await createResearchAgent({ models, model });
   try {
     const first = view(
-      await agent.execute({ kind: "start", tenantId: tenant, idempotencyKey: "one", brief }),
+      await agent.execute({ kind: "start", tenantId: tenant, idempotencyKey: "one", input: brief }),
     );
     const second = view(
       await agent.execute({
         kind: "start",
         tenantId: tenant,
         idempotencyKey: "two",
-        brief,
+        input: brief,
         sessionId: first.sessionId,
       }),
     );
@@ -425,7 +455,7 @@ test("a session survives a new process on the same directory", async () => {
     const first = scripted([say("funding was flat")]);
     const one = await createResearchAgent({ directory, models: first.models, model: first.model });
     const started = view(
-      await one.execute({ kind: "start", tenantId: tenant, idempotencyKey: "disk", brief }),
+      await one.execute({ kind: "start", tenantId: tenant, idempotencyKey: "disk", input: brief }),
     );
     await one.close();
 
@@ -454,7 +484,12 @@ test("an approval survives a restart and still sends exactly once", async () => 
     const first = scripted([call("place-order", { symbol: "BTC", side: "buy", quantity: "1" })]);
     const one = await createResearchAgent({ directory, models: first.models, model: first.model });
     const parked = view(
-      await one.execute({ kind: "start", tenantId: tenant, idempotencyKey: "restart", brief }),
+      await one.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "restart",
+        input: brief,
+      }),
     );
     await one.close();
     if (parked.status.kind !== "awaiting-approval") {

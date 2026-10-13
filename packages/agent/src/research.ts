@@ -97,9 +97,10 @@ export type OrderState = {
   conversationId: number;
   callId: string;
   operationId: string;
-  symbol: string;
-  side: "buy" | "sell";
-  quantity: string;
+  /** 发起审批的工具名，用于构建通用外部意图。 */
+  toolName: string;
+  /** 工具调用的原始参数，透传给 sandbox 执行器。 */
+  args: Record<string, string>;
   /**
    * `parked` waits for a person. `dispatched` is committed before the sandbox is called, so a crash
    * after it is recovered as interrupted instead of sending again. `closed` holds the outcome.
@@ -227,9 +228,8 @@ export function researchExtension(input: { sandbox: LeaseExecutor; now: () => Ti
           conversationId: api.conversationId,
           callId: api.callId,
           operationId,
-          symbol: intent.symbol,
-          side: intent.side,
-          quantity: intent.quantity,
+          toolName: "place-order",
+          args: intent.args,
           phase: "parked",
           result: null,
         });

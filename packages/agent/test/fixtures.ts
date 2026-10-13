@@ -75,10 +75,15 @@ export function lastUserText(context: TranscriptContext): string {
 export function recordingSandbox(
   answer: (lease: Lease) => Promise<LeaseResult> | LeaseResult = (lease) =>
     lease.kind === "external"
-      ? { kind: "ok", text: `order ${lease.task.symbol} ${lease.task.side} ${lease.task.quantity}` }
+      ? {
+          kind: "ok",
+          text: `order ${lease.task.args.symbol} ${lease.task.args.side} ${lease.task.args.quantity}`,
+        }
       : lease.task.kind === "read"
         ? { kind: "ok", text: `market ${lease.task.symbol}` }
-        : { kind: "ok", text: lease.task.content },
+        : lease.task.kind === "compute"
+          ? { kind: "ok", text: lease.task.code }
+          : { kind: "ok", text: lease.task.content },
 ) {
   const leases: Lease[] = [];
   return {

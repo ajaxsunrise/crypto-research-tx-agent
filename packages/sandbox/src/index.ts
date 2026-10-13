@@ -79,6 +79,10 @@ export function createSandbox(
     if (lease.deadlineAt <= now()) {
       return { kind: "timed-out" };
     }
+    if (lease.kind === "compute") {
+      // 代码执行由独立 sandbox gateway 处理；默认实现返回未配置提示，不在进程内执行代码。
+      return { kind: "failed", message: "Code execution is not configured." };
+    }
     if (lease.kind === "external") {
       if (lease.effect.approval.operationId !== lease.task.operationId) {
         return { kind: "failed", message: "The approval does not cover this order." };
