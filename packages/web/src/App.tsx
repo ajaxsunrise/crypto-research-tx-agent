@@ -15,6 +15,19 @@ type Catalog = {
 
 type Choice = "grant" | "deny";
 
+/** 两个可选的扩展类型：crypto 研究工具与代码执行工具。 */
+const extensions = [
+  { id: "crypto-research", name: "crypto 研究" },
+  { id: "code-execution", name: "代码执行" },
+] as const;
+
+function extensionFor(tenantId: string): string {
+  const stored = localStorage.getItem(`crypto-extension:${tenantId}`);
+  return stored !== null && extensions.some((item) => item.id === stored)
+    ? stored
+    : extensions[0].id;
+}
+
 function restoredMessages(view: SessionView): Message[] {
   return view.transcript.map((item, index): Message => {
     const id = `m${index}`;
@@ -111,7 +124,7 @@ function roleLabel(role: Message["role"]): string {
     case "user":
       return "你";
     case "assistant":
-      return "研究";
+      return "助手";
     case "tool":
       return "工具";
     default:
@@ -127,7 +140,8 @@ export function App() {
   const [tenant, setTenant] = useState("local");
   const [token, setToken] = useState("");
   const [model, setModel] = useState("");
-  const [horizon, setHorizon] = useState("24h");
+  const [extension, setExtension] = useState(() => extensionFor("local"));
+  const [horizon, setHorizon] = useState("");
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [interrupts, setInterrupts] = useState<Interrupt[]>([]);
@@ -269,19 +283,19 @@ export function App() {
 
   function changeTenant(value: string) {
     setTenant(value);
+    setExtension(extensionFor(value));
     setMessages([]);
     setInterrupts([]);
     setRunError(undefined);
   }
 
+  function changeExtension(value: string) {
+    setExtension(value);
+    localStorage.setItem(`crypto-extension:${tenant}`, value);
+  }
+
   async function run(input: { question?: string; decision?: Choice }) {
-    if (
-      sendingRef.current ||
-      model === "" ||
-      horizon.trim() === "" ||
-      tenant.trim() === "" ||
-      token === ""
-    ) {
+    if (sendingRef.current || model === "" || tenant.trim() === "" || token === "") {
       return;
     }
     sendingRef.current = true;
@@ -296,7 +310,11 @@ export function App() {
     try {
       await current.runAgent({
         runId: crypto.randomUUID(),
-        forwardedProps: { horizon: horizon.trim(), model },
+        forwardedProps: {
+          model,
+          extension,
+          ...(horizon.trim() === "" ? {} : { horizon: horizon.trim() }),
+        },
         ...(input.decision === undefined || waiting === undefined
           ? {}
           : {
@@ -360,8 +378,8 @@ export function App() {
   return (
     <main className="page">
       <header className="mast">
-        <p className="eyebrow">Crypto research</p>
-        <h1>研究会话</h1>
+        <p className="eyebrow">Agent</p>
+        <h1>会话</h1>
       </header>
       <section className="composer">
         <form onSubmit={onSubmit}>
@@ -398,7 +416,21 @@ export function App() {
             </select>
           </label>
           <label>
-            Horizon
+            扩展
+            <select
+              value={extension}
+              disabled={sending || waiting !== undefined}
+              onChange={(event) => changeExtension(event.target.value)}
+            >
+              {extensions.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Horizon（可选）
             <input
               value={horizon}
               disabled={sending || waiting !== undefined}

@@ -85,7 +85,7 @@ those tests skip.
 
 ## Open the page
 
-The page and the agent speak [AG-UI](https://github.com/ag-ui-protocol/ag-ui). The browser posts `RunAgentInput` to `POST /agent` and reads the SSE event stream. Every request carries a Bearer token configured in `TENANT_TOKENS`; the token determines the tenant. An optional `x-tenant-id` header must match that tenant. The page has fields for both values and keeps the token in page memory. Horizon and the model id travel in `forwardedProps`. A parked `place-order` ends the run as an interrupt; Grant sends `resume` with `payload.decision` `grant`, and Deny sends `deny`.
+The page and the agent speak [AG-UI](https://github.com/ag-ui-protocol/ag-ui). The browser posts `RunAgentInput` to `POST /agent` and reads the SSE event stream. Every request carries a Bearer token configured in `TENANT_TOKENS`; the token determines the tenant. An optional `x-tenant-id` header must match that tenant. The page has fields for both values and keeps the token in page memory. The model id, an optional Horizon, and the extension choice (`crypto-research` or `code-execution`) travel in `forwardedProps`; the choice decides which extension's tools and system prompt the thread loads. A parked `place-order` ends the run as an interrupt; Grant sends `resume` with `payload.decision` `grant`, and Deny sends `deny`.
 
 Fill `.env` from `.env.example` (`HTTP_HOST`, `HTTP_PORT`, `SCHEMA`, `SANDBOX_ROOT`, `TENANT_TOKENS`, `DEFAULT_MODEL`, `CATALOG_PATH`, `WEB_DIST`). Set `TENANT_TOKENS` to a JSON object mapping each tenant id to a unique token of at least 32 characters. Put provider keys in `model_providers.json` (see `model_providers.example.json`). `DEFAULT_MODEL` is `provider/modelId` and must exist in that file.
 
@@ -113,7 +113,8 @@ const result = await agent.execute({
   kind: "start",
   tenantId: brand("local", "TenantId"),
   idempotencyKey: "demo",
-  brief: { question: "What changed in BTC funding?", horizon: "24h" },
+  input: "What changed in BTC funding?\nHorizon: 24h",
+  extension: "crypto-research", // or "code-execution"; omit to load every installed extension
 });
 if (result.kind === "ok") {
   console.log(result.view.status, result.view.transcript);
@@ -142,7 +143,8 @@ const started = await worker.execute({
   kind: "start",
   tenantId: brand("acme", "TenantId"),
   idempotencyKey: requestId,
-  brief: { question: "What changed in BTC funding?", horizon: "24h" },
+  input: "What changed in BTC funding?\nHorizon: 24h",
+  extension: "crypto-research",
 });
 
 await worker.close(); // releases the storage lock and the connections
@@ -155,14 +157,14 @@ was started with across approvals and restarts.
 
 ### Isolation
 
-| Layer       | Mechanism                                                                                                                                                                                          |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sessions    | A `SessionOwnerDoc` row written in the same commit as the conversation. Every command checks it and fails closed: a session with no owner, or another tenant's name on it, is `session-not-found`. |
-| Idempotency | Start keys are namespaced per tenant, so the same key in two tenants starts two sessions.                                                                                                          |
-| Threads     | `crypto_threads` keys on `(tenant_id, thread_id)`, so one tenant never reads or overwrites another's thread.                                                                                       |
-| Ownership   | A session advisory lock on the schema. A second worker gets `StorageBusy`.                                                                                                                         |
-| HTTP access | A Bearer token maps each request to a configured tenant; a supplied `x-tenant-id` must match.                                                                                                      |
-| Tools       | A workspace per session (`session-<id>` under `sandboxRoot`), minted by the agent, never by the model. This is file separation, not process or network isolation.                                  |
+| Layer       | Mechanism                                                                                                                                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sessions    | A `SessionOwnerDoc` row written in the same commit as the conversation. Every command checks it and fails closed: a session with no owner, or another tenant's name on it, is `session-not-found`.                     |
+| Idempotency | Start keys are namespaced per tenant, so the same key in two tenants starts two sessions.                                                                                                                              |
+| Threads     | `crypto_threads` keys on `(tenant_id, thread_id)`, so one tenant never reads or overwrites another's thread.                                                                                                           |
+| Ownership   | A session advisory lock on the schema. A second worker gets `StorageBusy`.                                                                                                                                             |
+| HTTP access | A Bearer token maps each request to a configured tenant; a supplied `x-tenant-id` must match.                                                                                                                          |
+| Tools       | A workspace per session (`session-<id>` under `sandboxRoot`), minted by the agent, never by the model. Host-mode code execution is file separation only; docker mode adds process and network isolation per execution. |
 
 **One worker per storage.** pi-durable has no cross-process locking; two writers on one schema mint
 colliding ids (the storage-postgres tests demonstrate the collision). The advisory lock enforces
@@ -175,13 +177,13 @@ scaled past one worker with this backend; scale by sharding tenants across datab
 Every command names its `tenantId` and returns `{ kind: "ok", view }` or
 `{ kind: "rejected", rejection }`.
 
-| Command             | Payload                                                                             | What it does                                                                                                                                                                                                                          |
-| ------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `start`             | `tenantId`, `idempotencyKey`, `brief { question, horizon }`, `sessionId?`, `model?` | Submits a new run. Retrying the same key returns the session it created instead of running again — across a crash too. With `sessionId` the run continues that session's transcript; rejected `run-open` while its run is unfinished. |
-| `reload`, `persist` | `tenantId`, `sessionId`                                                             | Return the current view. Every commit is durable once it resolves, so there is nothing left to flush.                                                                                                                                 |
-| `resume`            | `tenantId`, `sessionId`                                                             | Finishes work a dead worker left: `replay: "safe"` tools rerun, an order left `dispatched` is reported `interrupted`, a closed-but-unreported order is reported.                                                                      |
-| `approve`           | `tenantId`, `sessionId`, `callId`, `operationId`, `decision`                        | Decides a parked order. `deny` closes it without calling the sandbox; `grant` permits one dispatch attempt. `callId` and `operationId` must match the parked order.                                                                   |
-| `cancel`            | `tenantId`, `sessionId`                                                             | Aborts the run and closes its orders (`parked` -> cancelled, never sent; `dispatched` -> interrupted). Idempotent.                                                                                                                    |
+| Command             | Payload                                                                     | What it does                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `start`             | `tenantId`, `idempotencyKey`, `input`, `sessionId?`, `model?`, `extension?` | Submits a new run. Retrying the same key returns the session it created instead of running again — across a crash too. With `sessionId` the run continues that session's transcript; rejected `run-open` while its run is unfinished. `extension` names the extension the session loads (`crypto-research`, `code-execution`); omitted, the session loads every installed extension. |
+| `reload`, `persist` | `tenantId`, `sessionId`                                                     | Return the current view. Every commit is durable once it resolves, so there is nothing left to flush.                                                                                                                                                                                                                                                                                |
+| `resume`            | `tenantId`, `sessionId`                                                     | Finishes work a dead worker left: `replay: "safe"` tools rerun, an order left `dispatched` is reported `interrupted`, a closed-but-unreported order is reported.                                                                                                                                                                                                                     |
+| `approve`           | `tenantId`, `sessionId`, `callId`, `operationId`, `decision`                | Decides a parked order. `deny` closes it without calling the sandbox; `grant` permits one dispatch attempt. `callId` and `operationId` must match the parked order.                                                                                                                                                                                                                  |
+| `cancel`            | `tenantId`, `sessionId`                                                     | Aborts the run and closes its orders (`parked` -> cancelled, never sent; `dispatched` -> interrupted). Idempotent.                                                                                                                                                                                                                                                                   |
 
 Rejections: `invalid-request`, `session-not-found`, `in-progress` (another command on this worker
 is driving the session), `run-open`, `not-awaiting-approval`, `approval-mismatch`.
@@ -208,9 +210,33 @@ decides.
 | `read-market` | `symbol`                     | `read`                      | `"safe"`   | runs again                                                          |
 | `write-note`  | `path`, `content`            | `idempotent-write` (sha256) | `"safe"`   | runs again; same hash returns stored text                           |
 | `place-order` | `symbol`, `side`, `quantity` | `external`                  | `"unsafe"` | parks; one dispatch attempt after approval; uncertain after a crash |
+| `run-bash`    | `command`                    | `compute`                   | `"safe"`   | runs again; same code returns the same output                       |
+| `run-python`  | `code`                       | `compute`                   | `"safe"`   | runs again; same code returns the same output                       |
 
 The operation id is minted by the agent as a durable memo inside the tool call, never taken from
 the model, so a model cannot replay an earlier order by reusing its id.
+
+## Code execution
+
+`run-bash` and `run-python` build a `compute` lease and hand it to `createCodeSandbox`, which runs
+the code outside the agent loop with a minimal environment — model credentials never reach it.
+Output is capped at 64 KiB per stream. Two execution modes:
+
+- **host** (default; dev and local): interpreters run as host child processes inside the session
+  workspace, with `PATH` as the only environment variable.
+- **docker** (production): each execution is a one-shot container (`--rm`) with the session
+  workspace mounted at `/workspace`, no network (`--network none`), no capabilities
+  (`--cap-drop ALL`, `no-new-privileges`), and memory / CPU caps. Aborting or timing out kills the
+  container with `docker kill`; containers carry the label `crypto.sandbox=true` so stray ones can
+  be found with `docker ps -a --filter label=crypto.sandbox=true`.
+
+The server picks the mode from the environment: `CODE_SANDBOX_MODE` (`host`, the default, or
+`docker`), `CODE_SANDBOX_IMAGE` (required for docker — pre-pull it, because the 30 s lease window
+does not wait for a pull; the image must provide `bash`, `python3`, and `node` for the matching
+tools), `CODE_SANDBOX_MEMORY` (default `512m`), `CODE_SANDBOX_CPUS` (default `1`).
+
+Docker integration tests need a running daemon and run with `CRYPTO_DOCKER_TESTS=1`
+(`CRYPTO_DOCKER_IMAGE` overrides the image).
 
 ## Order dispatch and recovery
 
@@ -271,12 +297,12 @@ The package also exports the pieces directly: `openPostgresStorage`, `PostgresDa
 
 ## Testing
 
-| Suite                       | What it verifies                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/domain`           | Effect classes, content-hash integrity, lease deadlines, tenant-id safety.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `packages/sandbox`          | Content-hash idempotency; two workspaces keep their notes apart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `packages/storage-postgres` | The conformance suite above; every dialect rule against the shipped migrations; lock mutual exclusion; the lock released by the server when a connection dies; two unlocked writers on one schema collide — the hazard the lock exists to prevent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `packages/agent`            | Commands end to end: idempotent start (same key, same session, one run), empty brief rejected, reads through the sandbox, approval grant/deny/mismatch, active order cancellation and close recovery, provider errors fail the run, follow-up runs see the earlier transcript, sessions survive a new process. Crash tests kill a real child process mid-tool on both SQLite and Postgres. Two tenants in one agent and in one Postgres worker keep separate sessions and idempotency keys, and a cross-tenant reload is `session-not-found`; `StorageBusy`; takeover after a dead worker; per-run model choices rejected before anything runs; the HTTP layer requires a Bearer token and scopes threads per tenant; the logger's level filtering, formats, queue drops, and file rotation. |
+| Suite                       | What it verifies                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/domain`           | Effect classes, content-hash integrity, lease deadlines, tenant-id safety.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `packages/sandbox`          | Content-hash idempotency; two workspaces keep their notes apart. The code sandbox: host-mode stdout/exit/abort/timeout semantics; docker mode (gated by `CRYPTO_DOCKER_TESTS=1`) runs in a container, keeps workspace files across executions, has no network, and leaves no container behind after an abort.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `packages/storage-postgres` | The conformance suite above; every dialect rule against the shipped migrations; lock mutual exclusion; the lock released by the server when a connection dies; two unlocked writers on one schema collide — the hazard the lock exists to prevent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `packages/agent`            | Commands end to end: idempotent start (same key, same session, one run), empty input rejected, reads through the sandbox, approval grant/deny/mismatch, active order cancellation and close recovery, provider errors fail the run, follow-up runs see the earlier transcript, sessions survive a new process. Extension selection: an unknown name is rejected, a thread loads the chosen extension's tools, a later start can switch it, and no choice loads every installed extension. Crash tests kill a real child process mid-tool on both SQLite and Postgres. Two tenants in one agent and in one Postgres worker keep separate sessions and idempotency keys, and a cross-tenant reload is `session-not-found`; `StorageBusy`; takeover after a dead worker; per-run model choices rejected before anything runs; the HTTP layer requires a Bearer token, forwards the extension choice, and scopes threads per tenant; the logger's level filtering, formats, queue drops, and file rotation. |
 
 Tests run from compiled output — `pnpm typecheck` builds what `pnpm test` runs. The crash tests
 spawn a child that dies inside the sandbox (`exit 9`), then reopen the storage the way a
@@ -287,11 +313,12 @@ replacement worker would.
 ```text
 packages/
   domain/             effect classes, leases, commands, session views — policy, no I/O
-  sandbox/            the LeaseExecutor: one workspace store per session
+  sandbox/            the LeaseExecutor: one workspace store per session; code.ts runs compute leases
   storage-postgres/   dialect.ts, database.ts, the storage lock, the conformance suite
   agent/
     agent.ts          the commands, run and order state, transcript derivation
-    research.ts       the tools and the durable docs (session-owner, start, run, order, open-orders)
+    research.ts       the crypto-research tools and the durable docs (session-owner, start, run, order, open-orders)
+    extensions/       the code-execution extension (run-bash, run-python)
     worker.ts         openAgentWorker: schema, storage lock, sandbox, agent
     open.ts           openAgent: harness, registry, model resolution
 docs/                 the research notes this build follows

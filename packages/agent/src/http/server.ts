@@ -190,6 +190,7 @@ async function startRun(
     threadId: ready.run.threadId,
     input,
     model: ready.model,
+    extension: ready.run.extension,
     ...(ready.sessionId === undefined ? {} : { sessionId: ready.sessionId }),
   });
 }

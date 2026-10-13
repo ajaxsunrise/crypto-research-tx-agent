@@ -19,7 +19,7 @@ function longDeadline() {
 }
 
 test("bash 命令正常执行返回 stdout", async () => {
-  const executor = createCodeSandbox();
+  const executor = createCodeSandbox({});
   const l = lease("bash", "echo hello");
   l.deadlineAt = longDeadline();
   const result = await executor(l, signal);
@@ -27,7 +27,7 @@ test("bash 命令正常执行返回 stdout", async () => {
 });
 
 test("python3 代码正常执行返回 stdout", async () => {
-  const executor = createCodeSandbox();
+  const executor = createCodeSandbox({});
   const l = lease("python3", 'print("world")');
   l.deadlineAt = longDeadline();
   const result = await executor(l, signal);
@@ -35,7 +35,7 @@ test("python3 代码正常执行返回 stdout", async () => {
 });
 
 test("退出码非零返回 failed 并包含 stderr", async () => {
-  const executor = createCodeSandbox();
+  const executor = createCodeSandbox({});
   const l = lease("bash", "echo 'something went wrong' >&2; exit 1");
   l.deadlineAt = longDeadline();
   const result = await executor(l, signal);
@@ -44,7 +44,7 @@ test("退出码非零返回 failed 并包含 stderr", async () => {
 });
 
 test("未支持语言返回 failed", async () => {
-  const executor = createCodeSandbox();
+  const executor = createCodeSandbox({});
   const l = lease("ruby", 'puts "hi"');
   l.deadlineAt = longDeadline();
   const result = await executor(l, signal);
@@ -53,7 +53,7 @@ test("未支持语言返回 failed", async () => {
 });
 
 test("已取消的 signal 立即返回 cancelled", async () => {
-  const executor = createCodeSandbox();
+  const executor = createCodeSandbox({});
   const l = lease("bash", "echo hi");
   l.deadlineAt = longDeadline();
   const aborted = new AbortController();
@@ -63,7 +63,7 @@ test("已取消的 signal 立即返回 cancelled", async () => {
 });
 
 test("过期 deadline 返回 timed-out", async () => {
-  const executor = createCodeSandbox();
+  const executor = createCodeSandbox({});
   const l = lease("bash", "echo hi");
   l.deadlineAt = brand(Date.now() - 1, "Timestamp");
   const result = await executor(l, signal);
@@ -71,7 +71,7 @@ test("过期 deadline 返回 timed-out", async () => {
 });
 
 test("执行期间 abort 返回 cancelled", async () => {
-  const executor = createCodeSandbox();
+  const executor = createCodeSandbox({});
   const l = lease("bash", "sleep 60");
   l.deadlineAt = longDeadline();
   const controller = new AbortController();

@@ -1,4 +1,5 @@
 import { config as loadDotenv } from "dotenv";
+import type { CodeSandboxMode } from "@crypto/sandbox/code";
 
 export type ServerConfig = {
   readonly httpHost: string;
@@ -7,6 +8,8 @@ export type ServerConfig = {
   readonly schema: string;
   readonly connectionString: string;
   readonly sandboxRoot: string;
+  /** 代码执行 sandbox 的运行方式：主机执行或 docker 容器隔离。 */
+  readonly codeSandbox: CodeSandboxMode;
   readonly defaultModel: string;
   readonly catalogPath: string;
   readonly tenantTokens: string;
@@ -30,7 +33,24 @@ function requiredPort(env: NodeJS.ProcessEnv, name: string): number {
   return port;
 }
 
-export function connectionStringFrom(input: {
+export /** CODE_SANDBOX_MODE：host（默认，dev / local 直接在主机执行）或 docker（生产容器隔离）。 */
+function parseCodeSandboxMode(env: NodeJS.ProcessEnv): CodeSandboxMode {
+  const mode = env.CODE_SANDBOX_MODE?.trim() || "host";
+  if (mode === "host") {
+    return { kind: "host" };
+  }
+  if (mode === "docker") {
+    return {
+      kind: "docker",
+      image: required(env, "CODE_SANDBOX_IMAGE"),
+      ...(env.CODE_SANDBOX_MEMORY?.trim() ? { memory: env.CODE_SANDBOX_MEMORY.trim() } : {}),
+      ...(env.CODE_SANDBOX_CPUS?.trim() ? { cpus: env.CODE_SANDBOX_CPUS.trim() } : {}),
+    };
+  }
+  throw new Error("CODE_SANDBOX_MODE must be host or docker.");
+}
+
+function connectionStringFrom(input: {
   host: string;
   port: number;
   user: string;
@@ -55,6 +75,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     httpPort: requiredPort(env, "HTTP_PORT"),
     schema: schema === undefined || schema === "" ? "crypto_agent" : schema,
     sandboxRoot: required(env, "SANDBOX_ROOT"),
+    codeSandbox: parseCodeSandboxMode(env),
     defaultModel: required(env, "DEFAULT_MODEL"),
     catalogPath: required(env, "CATALOG_PATH"),
     tenantTokens: required(env, "TENANT_TOKENS"),

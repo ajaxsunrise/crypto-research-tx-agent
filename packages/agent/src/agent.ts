@@ -24,6 +24,7 @@ import type {
   ConversationId,
   Cursor,
   EntryRecord,
+  Extension,
   Harness,
   ModelRef,
   SubmissionId,
@@ -61,6 +62,8 @@ export type AgentOptions = {
   harness: Harness;
   /** The sandbox. External leases go through it only after a grant. */
   sandbox: LeaseExecutor;
+  /** 已安装的扩展；start 携带的 extension 选择在其中解析为会话的扩展集合。 */
+  extensions: readonly Extension[];
   /** The model a start runs with when it does not name one. */
   model: ModelRef | undefined;
   /** Resolves the `model` choice a start carries; throws on an id the catalog does not know. */
@@ -397,6 +400,7 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
     requestId: string,
     kind: "new-run" | "continuation",
     model: ModelRef | undefined,
+    extension: Extension | undefined,
   ): Promise<boolean> {
     const prior = await runOf(conversation.id);
     if (prior?.outcome.kind !== "open" || active.get(conversation.id)?.controller.signal.aborted) {
@@ -406,6 +410,10 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
       kind === "new-run" ? model : modelRefOf((await runOf(conversation.id))?.model);
     if (configureWith !== undefined) {
       await conversation.configure({ model: configureWith }, context);
+    }
+    // 新一次 start 携带的扩展选择决定会话加载哪些扩展；continuation 沿用会话当前的选择。
+    if (kind === "new-run" && extension !== undefined) {
+      await conversation.configure({ extensions: [extension] }, context);
     }
     if (active.get(conversation.id)?.controller.signal.aborted) {
       return false;
@@ -447,12 +455,21 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
     if (started?.input === undefined) {
       throw new Error(`Start ${run.pendingStart} has no stored input.`);
     }
+    const extensionName = started.extension ?? undefined;
+    const extension =
+      extensionName === undefined
+        ? undefined
+        : options.extensions.find((item) => item.name === extensionName);
+    if (extensionName !== undefined && extension === undefined) {
+      throw new Error(`Start ${run.pendingStart} names an unknown extension ${extensionName}.`);
+    }
     await submitInput(
       conversation,
       started.input,
       `start:${run.pendingStart}`,
       "new-run",
       modelRefOf(started.model),
+      extension,
     );
   }
 
@@ -488,6 +505,18 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
           },
         };
       }
+    }
+    if (
+      command.extension !== undefined &&
+      !options.extensions.some((item) => item.name === command.extension)
+    ) {
+      return {
+        kind: "rejected",
+        rejection: {
+          kind: "invalid-request",
+          message: `Unknown extension ${command.extension}.`,
+        },
+      };
     }
 
     let target: Conversation | undefined;
@@ -576,6 +605,7 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
       started.conversationId = conversationId;
       started.input = input;
       started.model = storedModelOf(model);
+      started.extension = command.extension ?? null;
       if (thread !== undefined) {
         thread.conversationId = conversationId;
       }
@@ -661,6 +691,7 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
       resultText(operationId, order.result),
       `order:${operationId}`,
       "continuation",
+      undefined,
       undefined,
     );
     if (!submitted) {

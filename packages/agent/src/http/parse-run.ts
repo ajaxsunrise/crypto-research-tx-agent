@@ -15,6 +15,7 @@ export type ParsedRun = {
   readonly question: string | undefined;
   readonly horizon: string | undefined;
   readonly model: string | undefined;
+  readonly extension: string | undefined;
   readonly resume: ParsedResume | undefined;
 };
 
@@ -118,6 +119,7 @@ export function parseRun(value: unknown): ParseRunResult {
       question,
       horizon,
       model: trimmed(props.model),
+      extension: trimmed(props.extension),
       resume,
     },
   };

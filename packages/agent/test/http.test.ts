@@ -310,6 +310,73 @@ test("the same thread id in two tenants is two sessions", async () => {
   }
 });
 
+test("a run forwards the extension choice to the thread", async () => {
+  const { models, model } = scripted([
+    call("run-bash", { command: "echo code-ran" }),
+    say("code done"),
+  ]);
+  const agent = await createResearchAgent({ models, model });
+  const app = createAgentHttp({
+    authenticate,
+    agent,
+    threads: memoryThreads(),
+    models,
+    defaultModel: model,
+    catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
+  });
+  const server = await listenAgentHttp(app, "127.0.0.1", 0);
+  try {
+    const response = await postRun(server.url, {
+      threadId: "thread-1",
+      runId: "run-1",
+      messages: [{ id: "user-1", role: "user", content: "Run echo." }],
+      forwardedProps: { extension: "code-execution" },
+    });
+    assert.equal(response.status, 200);
+    const events = eventsOf(await response.text());
+    assert.equal(
+      events.some((event) => event.type === "TOOL_CALL_RESULT" && event.content === "code-ran"),
+      true,
+    );
+    assert.deepEqual(events.at(-1)?.outcome, { type: "success" });
+  } finally {
+    await server.close();
+    await agent.close();
+  }
+});
+
+test("a run naming an unknown extension streams an error", async () => {
+  const { models, model } = scripted([say("unused")]);
+  const agent = await createResearchAgent({ models, model });
+  const app = createAgentHttp({
+    authenticate,
+    agent,
+    threads: memoryThreads(),
+    models,
+    defaultModel: model,
+    catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
+  });
+  const server = await listenAgentHttp(app, "127.0.0.1", 0);
+  try {
+    const response = await postRun(server.url, {
+      threadId: "thread-1",
+      runId: "run-1",
+      messages: [{ id: "user-1", role: "user", content: "hello" }],
+      forwardedProps: { extension: "nope" },
+    });
+    assert.equal(response.status, 200);
+    const events = eventsOf(await response.text());
+    const error = events.find((event) => event.type === "RUN_ERROR");
+    assert.equal(typeof error?.message, "string");
+    assert.match(error?.message as string, /Unknown extension nope/);
+  } finally {
+    await server.close();
+    await agent.close();
+  }
+});
+
 test("a parked order ends as an interrupt and a grant resume sends it once", async () => {
   const { models, model } = scripted([
     call("place-order", { symbol: "BTC", side: "buy", quantity: "1" }),

@@ -16,10 +16,15 @@ const worker = await openAgentWorker({
   connectionString: config.connectionString,
   schema: config.schema,
   sandboxRoot: config.sandboxRoot,
+  codeSandbox: config.codeSandbox,
   model: config.defaultModel,
   models,
 });
-log.info("worker opened", { schema: config.schema, model: config.defaultModel });
+log.info("worker opened", {
+  schema: config.schema,
+  model: config.defaultModel,
+  codeSandbox: config.codeSandbox.kind,
+});
 let threads: TenantThreads | undefined;
 let listening: Awaited<ReturnType<typeof listenAgentHttp>> | undefined;
 let closing: Promise<void> | undefined;

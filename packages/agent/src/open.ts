@@ -82,6 +82,7 @@ export async function openAgent(input: {
   const agent = createAgent({
     harness,
     sandbox: input.sandbox,
+    extensions: input.extensions,
     model,
     resolveChoice: (choice: string) => resolveModel(input.models, choice) as ModelRef,
     now,

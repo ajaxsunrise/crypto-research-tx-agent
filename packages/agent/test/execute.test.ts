@@ -159,6 +159,122 @@ test("an empty input is rejected", async () => {
   }
 });
 
+test("a start naming an unknown extension is rejected", async () => {
+  const { models, model } = scripted([]);
+  const agent = await createResearchAgent({ models, model });
+  try {
+    const result = await agent.execute({
+      kind: "start",
+      tenantId: tenant,
+      idempotencyKey: "ext",
+      input: brief,
+      extension: "nope",
+    });
+    if (result.kind !== "rejected" || result.rejection.kind !== "invalid-request") {
+      assert.fail(`expected an invalid-request rejection, got ${JSON.stringify(result)}`);
+    }
+    assert.match(result.rejection.message, /Unknown extension nope/);
+  } finally {
+    await agent.close();
+  }
+});
+
+test("a thread with the code-execution extension runs bash through the code sandbox", async () => {
+  const { models, model } = scripted([
+    call("run-bash", { command: "echo code-ran" }),
+    (context) => {
+      assert.equal(lastToolResultText(context), "code-ran");
+      return say("code done");
+    },
+  ]);
+  const agent = await createResearchAgent({ models, model });
+  try {
+    const started = view(
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "code",
+        input: "Run echo.",
+        extension: "code-execution",
+      }),
+    );
+    assert.equal(started.status.kind, "completed");
+    const result = started.transcript.find((item) => item.kind === "tool-result");
+    assert.deepEqual(result?.kind === "tool-result" ? result.result : undefined, {
+      kind: "ok",
+      text: "code-ran",
+    });
+  } finally {
+    await agent.close();
+  }
+});
+
+test("a later start can switch the session's extension", async () => {
+  const { models, model } = scripted([
+    say("first answer"),
+    call("run-bash", { command: "echo switched" }),
+    (context) => {
+      assert.equal(lastToolResultText(context), "switched");
+      return say("second answer");
+    },
+  ]);
+  const agent = await createResearchAgent({ models, model });
+  try {
+    const first = view(
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "crypto-first",
+        input: brief,
+        extension: "crypto-research",
+      }),
+    );
+    assert.equal(first.status.kind, "completed");
+    const second = view(
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "code-second",
+        input: "Now run echo.",
+        sessionId: first.sessionId,
+        extension: "code-execution",
+      }),
+    );
+    assert.equal(second.sessionId, first.sessionId);
+    assert.equal(second.status.kind, "completed");
+    const result = second.transcript.find((item) => item.kind === "tool-result");
+    assert.deepEqual(result?.kind === "tool-result" ? result.result : undefined, {
+      kind: "ok",
+      text: "switched",
+    });
+  } finally {
+    await agent.close();
+  }
+});
+
+test("a start without a choice offers every installed extension", async () => {
+  const { models, model } = scripted([call("run-bash", { command: "echo any-tool" }), say("done")]);
+  const agent = await createResearchAgent({ models, model });
+  try {
+    const started = view(
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "default",
+        input: brief,
+      }),
+    );
+    assert.equal(started.status.kind, "completed");
+    const result = started.transcript.find((item) => item.kind === "tool-result");
+    assert.deepEqual(result?.kind === "tool-result" ? result.result : undefined, {
+      kind: "ok",
+      text: "any-tool",
+    });
+  } finally {
+    await agent.close();
+  }
+});
+
 test("a read-market call reads once through the sandbox and completes", async () => {
   const { leases, sandbox } = recordingSandbox();
   const { models, model } = scripted([

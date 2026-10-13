@@ -5,7 +5,7 @@ import {
   type LeaseResult,
   type Timestamp,
 } from "@crypto/domain/lease";
-import { createCodeSandbox } from "@crypto/sandbox/code";
+import { createCodeSandbox, type CodeSandboxMode } from "@crypto/sandbox/code";
 import type { Context } from "@earendil-works/chord";
 import { Type } from "@earendil-works/pi-ai";
 import {
@@ -63,13 +63,18 @@ const systemPrompt = [
 ].join(" ");
 
 /**
- * 代码执行扩展：在隔离子进程中运行 bash 命令和 Python 脚本。
+ * 代码执行扩展：把 bash 命令和 Python 脚本转发到代码执行 sandbox。
  * 模型凭证不进入 sandbox；每次执行在会话专属工作目录中运行。
  *
- * rootDir 是所有工作目录的父目录。不传时在系统临时目录执行（无持久化）。
+ * rootDir 是所有工作目录的父目录；host 模式不传时在系统临时目录执行（无持久化），
+ * docker 模式必须提供。mode 缺省为主机执行（dev / local）。
  */
-export function codeExtension(input: { rootDir?: string; now: () => Timestamp }) {
-  const executor = createCodeSandbox(input.rootDir, input.now);
+export function codeExtension(input: {
+  rootDir?: string;
+  mode?: CodeSandboxMode;
+  now: () => Timestamp;
+}) {
+  const executor = createCodeSandbox({ root: input.rootDir, mode: input.mode, now: input.now });
   const now = input.now;
 
   const runBash = defineTool({

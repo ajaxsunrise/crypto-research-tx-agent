@@ -51,6 +51,8 @@ export type AgentCommand =
       threadId?: string;
       /** `provider/id`; resolved against the catalog of the agent that runs it. */
       model?: string;
+      /** 会话加载的扩展名（如 crypto-research、code-execution）；缺省时加载全部已安装扩展。 */
+      extension?: string;
     }
   | { kind: "persist"; tenantId: TenantId; sessionId: SessionId }
   | { kind: "reload"; tenantId: TenantId; sessionId: SessionId; threadId?: never }

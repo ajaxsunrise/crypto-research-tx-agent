@@ -1,5 +1,6 @@
 import type { LeaseExecutor, Timestamp } from "@crypto/domain/lease";
 import { createSandbox } from "@crypto/sandbox";
+import type { CodeSandboxMode } from "@crypto/sandbox/code";
 import {
   configurePgTypes,
   ensureSchema,
@@ -14,6 +15,7 @@ import type { Extension, HarnessSettings } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import pg from "pg";
 
+import { codeExtension } from "./extensions/code.js";
 import { openAgent, type ModelChoice, type OpenedAgent } from "./open.js";
 import { researchExtension } from "./research.js";
 
@@ -36,6 +38,8 @@ export type AgentWorkerOptions = {
   /** Defaults to pi-ai's built-in providers, which read keys from the environment. */
   models?: Models | (() => Models);
   sandbox?: LeaseExecutor;
+  /** 代码执行 sandbox 的运行方式；缺省在主机子进程执行。生产用 docker 隔离。 */
+  codeSandbox?: CodeSandboxMode;
   settings?: HarnessSettings;
   resumeOnOpen?: boolean;
   now?: () => Timestamp;
@@ -77,7 +81,10 @@ export async function openAgentWorker(options: AgentWorkerOptions): Promise<Agen
       typeof options.models === "function" ? options.models() : (options.models ?? builtinModels());
     const sandbox = options.sandbox ?? createSandbox(options.sandboxRoot, options.now);
     const now = options.now ?? (() => Date.now() as Timestamp);
-    const extensions: Extension[] = [researchExtension({ sandbox, now })];
+    const extensions: Extension[] = [
+      researchExtension({ sandbox, now }),
+      codeExtension({ rootDir: options.sandboxRoot, mode: options.codeSandbox, now }),
+    ];
 
     return await openAgent({
       storage,

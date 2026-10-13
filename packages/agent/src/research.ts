@@ -68,6 +68,8 @@ export type StartState = {
   conversationId: number;
   input?: string;
   model?: StoredModel | null;
+  /** 本次 start 为会话选择的扩展名；null 表示未选择（跟随默认的扩展集合）。 */
+  extension?: string | null;
   submissionId?: number;
 };
 
