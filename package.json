@@ -1,0 +1,21 @@
+{
+  "name": "crypto-research-tx-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -b && pnpm --filter @crypto/web typecheck",
+    "lint": "oxlint",
+    "fmt": "oxfmt",
+    "test": "node --test packages/domain/dist/test/*.test.js packages/sandbox/dist/test/*.test.js packages/storage-postgres/dist/test/*.test.js packages/agent/dist/test/*.test.js",
+    "start": "node packages/agent/dist/src/http/main.js",
+    "dev:web": "pnpm --filter @crypto/web dev",
+    "build:web": "pnpm --filter @crypto/web build"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "typescript": "7.0.2"
+  },
+  "packageManager": "pnpm@12.11.2"
+}

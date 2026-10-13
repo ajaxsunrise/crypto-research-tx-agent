@@ -1,0 +1,84 @@
+import { openAgentWorker } from "../worker.js";
+import { createTenantAuthenticator } from "./auth.js";
+import { catalogView, readCatalog, registerCatalog } from "./catalog.js";
+import { loadEnvFile, loadServerConfig } from "./config.js";
+import { createAgentHttp, listenAgentHttp } from "./server.js";
+import { postgresThreads, type TenantThreads } from "./threads.js";
+
+loadEnvFile();
+const config = loadServerConfig(process.env);
+const authenticate = createTenantAuthenticator(config.tenantTokens);
+const catalog = await readCatalog(config.catalogPath);
+const models = registerCatalog(catalog);
+const worker = await openAgentWorker({
+  connectionString: config.connectionString,
+  schema: config.schema,
+  sandboxRoot: config.sandboxRoot,
+  model: config.defaultModel,
+  models,
+});
+let threads: TenantThreads | undefined;
+let listening: Awaited<ReturnType<typeof listenAgentHttp>> | undefined;
+let closing: Promise<void> | undefined;
+
+async function closeResources(): Promise<void> {
+  const results = await Promise.allSettled([listening?.close(), worker.close()]);
+  results.push(...(await Promise.allSettled([threads?.close()])));
+  const failures = results.filter((result) => result.status === "rejected");
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map((result) => result.reason),
+      "Server close failed.",
+    );
+  }
+}
+
+const initialized = (async () => {
+  try {
+    threads = await postgresThreads({
+      connectionString: config.connectionString,
+      schema: config.schema,
+    });
+    const app = createAgentHttp({
+      agent: worker,
+      threads,
+      models,
+      defaultModel: config.defaultModel,
+      catalog: catalogView(catalog, config.defaultModel),
+      authenticate,
+      webDistPath: config.webDistPath,
+    });
+    listening = await listenAgentHttp(app, config.httpHost, config.httpPort);
+    return listening;
+  } catch (error) {
+    try {
+      await closeResources();
+    } catch (closeError) {
+      throw new AggregateError([error, closeError], "Server initialization failed.");
+    }
+    throw error;
+  }
+})();
+
+function shutdown(): Promise<void> {
+  closing ??= initialized.then(closeResources);
+  return closing;
+}
+
+function reportFailure(error: unknown): void {
+  console.error(error);
+  process.exitCode = 1;
+}
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => {
+    void shutdown().catch(reportFailure);
+  });
+}
+void worker.recovery.catch((error: unknown) => {
+  reportFailure(error);
+  void shutdown().catch(reportFailure);
+});
+
+const server = await initialized;
+console.log(`listening ${server.url}`);

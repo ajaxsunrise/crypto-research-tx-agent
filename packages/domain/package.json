@@ -1,0 +1,16 @@
+{
+  "name": "@crypto/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./lease": {
+      "types": "./dist/src/lease.d.ts",
+      "import": "./dist/src/lease.js"
+    },
+    "./internal": {
+      "types": "./dist/src/internal.d.ts",
+      "import": "./dist/src/internal.js"
+    }
+  }
+}

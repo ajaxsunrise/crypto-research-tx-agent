@@ -1,0 +1,30 @@
+{
+  "name": "@crypto/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "dependencies": {
+    "@ag-ui/core": "1.0.2",
+    "@ag-ui/encoder": "1.0.2",
+    "@crypto/domain": "workspace:*",
+    "@crypto/sandbox": "workspace:*",
+    "@crypto/storage-postgres": "workspace:*",
+    "@earendil-works/chord": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-durable": "1.1.0",
+    "@hono/node-server": "^2.1.4",
+    "dotenv": "^18.0.7",
+    "hono": "^4.13.13",
+    "pg": "8.16.3",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.6"
+  }
+}

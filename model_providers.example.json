@@ -1,0 +1,15 @@
+{
+  "providers": {
+    "example": {
+      "baseUrl": "https://example.invalid",
+      "apiKey": "",
+      "api": "anthropic-messages",
+      "models": [
+        {
+          "id": "example-model",
+          "name": "Example"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+node_modules
+dist
+.DS_Store
+.arena
+.scratch
+.env
+model_providers.json
+dev/sandbox
+tasks

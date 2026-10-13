@@ -1,0 +1,10 @@
+packages:
+  - "packages/*"
+
+# pi-durable pulls these in transitively. None needs to run an install script for our use:
+# esbuild and protobufjs ship usable artifacts, and @google/genai is only needed at runtime.
+# Without this the install fails on an interactive "approve builds" prompt.
+allowBuilds:
+  "@google/genai": false
+  esbuild: false
+  protobufjs: false

@@ -1,0 +1,171 @@
+:root {
+  color-scheme: light;
+  font-family: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+  background: #f3efe6;
+  color: #221e18;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.page {
+  display: grid;
+  grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
+  gap: 2rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 4rem;
+}
+
+.mast {
+  grid-column: 1 / -1;
+}
+
+.eyebrow {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6d6458;
+}
+
+h1 {
+  margin: 0.25rem 0 0;
+  font-size: 2.4rem;
+  font-weight: 560;
+}
+
+form,
+.approval,
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.85rem;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #cfc6b8;
+  border-radius: 0.4rem;
+  background: #fffdf8;
+  color: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  align-self: start;
+  padding: 0.55rem 0.95rem;
+  border: 0;
+  border-radius: 999px;
+  background: #2c241c;
+  color: #f7f3eb;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+button.quiet {
+  background: transparent;
+  color: #2c241c;
+  border: 1px solid #2c241c;
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.approval,
+.entry,
+.error {
+  padding: 0.9rem 1rem;
+  border-radius: 0.6rem;
+}
+
+.approval {
+  background: #fff6df;
+  border: 1px solid #e2c98a;
+}
+
+.error {
+  margin: 0;
+  background: #fde8e4;
+  border: 1px solid #e3b2a8;
+}
+
+.transcript {
+  min-height: 16rem;
+}
+
+.entry {
+  background: #fffdf8;
+  border: 1px solid #e4ddd2;
+}
+
+.entry h2 {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6d6458;
+}
+
+.entry p,
+.empty,
+.pending {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.entry .call {
+  margin: 0;
+  padding: 0.7rem;
+  overflow: auto;
+  border-radius: 0.4rem;
+  background: #f6f1e8;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.empty,
+.pending {
+  color: #6d6458;
+}
+
+@media (max-width: 800px) {
+  .page {
+    grid-template-columns: 1fr;
+  }
+}

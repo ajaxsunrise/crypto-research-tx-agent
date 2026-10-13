@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/domain" },
+    { "path": "packages/sandbox" },
+    { "path": "packages/storage-postgres" },
+    { "path": "packages/agent" }
+  ]
+}
