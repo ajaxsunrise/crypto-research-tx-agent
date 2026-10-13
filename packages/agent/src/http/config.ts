@@ -13,6 +13,9 @@ export type ServerConfig = {
   readonly defaultModel: string;
   readonly catalogPath: string;
   readonly tenantTokens: string;
+  /** 注册登录模块的 JWT 签名密钥与有效期。 */
+  readonly jwtSecret: string;
+  readonly jwtTtlSeconds: number;
   readonly webDistPath: string | undefined;
 };
 
@@ -50,6 +53,26 @@ function parseCodeSandboxMode(env: NodeJS.ProcessEnv): CodeSandboxMode {
   throw new Error("CODE_SANDBOX_MODE must be host or docker.");
 }
 
+function jwtSecret(env: NodeJS.ProcessEnv): string {
+  const secret = required(env, "AUTH_JWT_SECRET");
+  if (secret.length < 32) {
+    throw new Error("AUTH_JWT_SECRET must be at least 32 characters.");
+  }
+  return secret;
+}
+
+function optionalInt(env: NodeJS.ProcessEnv, name: string, defaultValue: number): number {
+  const raw = env[name]?.trim();
+  if (raw === undefined || raw === "") {
+    return defaultValue;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return value;
+}
+
 function connectionStringFrom(input: {
   host: string;
   port: number;
@@ -79,6 +102,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     defaultModel: required(env, "DEFAULT_MODEL"),
     catalogPath: required(env, "CATALOG_PATH"),
     tenantTokens: required(env, "TENANT_TOKENS"),
+    jwtSecret: jwtSecret(env),
+    jwtTtlSeconds: optionalInt(env, "AUTH_JWT_TTL_SECONDS", 86_400),
     webDistPath: webDist === undefined || webDist === "" ? undefined : webDist,
     connectionString: connectionStringFrom({
       host: required(env, "DB_HOST"),

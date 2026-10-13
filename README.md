@@ -23,7 +23,9 @@ Built, with a test for each claim:
   an owner row that fails closed when another tenant names a session it does not own.
 - pi-durable's own storage conformance suite (24 cases at 1.1.0) passing against Postgres.
 - An AG-UI server on `POST /agent` and a page that drives it, tenant chosen per request.
-- Bearer token authentication maps each request to its tenant through `TENANT_TOKENS`.
+- Bearer token authentication maps each request to its tenant: static tokens from `TENANT_TOKENS`
+  for operators and local development, and HS256 JWTs issued by `POST /api/auth/login` for
+  registered users (email + password, scrypt-hashed in `crypto_users`, one tenant per account).
 
 Not built yet — the seams exist, the implementations do not:
 
@@ -85,9 +87,9 @@ those tests skip.
 
 ## Open the page
 
-The page and the agent speak [AG-UI](https://github.com/ag-ui-protocol/ag-ui). The browser posts `RunAgentInput` to `POST /agent` and reads the SSE event stream. Every request carries a Bearer token configured in `TENANT_TOKENS`; the token determines the tenant. An optional `x-tenant-id` header must match that tenant. The page has fields for both values and keeps the token in page memory. The model id, an optional Horizon, and the extension choice (`crypto-research` or `code-execution`) travel in `forwardedProps`; the choice decides which extension's tools and system prompt the thread loads. A parked `place-order` ends the run as an interrupt; Grant sends `resume` with `payload.decision` `grant`, and Deny sends `deny`.
+The page and the agent speak [AG-UI](https://github.com/ag-ui-protocol/ag-ui). The browser posts `RunAgentInput` to `POST /agent` and reads the SSE event stream. The page opens with a login screen: register or log in with an email and password (`POST /api/auth/register` / `POST /api/auth/login`), and the server answers with a JWT whose subject is the account's tenant id; a "访问令牌" (access token) mode enters a static tenant token from `TENANT_TOKENS` directly. Every request carries the token as a Bearer credential; an optional `x-tenant-id` header must match that tenant. The session (token and tenant id) persists in `localStorage`, and any authenticated request answered with 401 signs the page out back to the login screen. The model id, an optional Horizon, and the extension choice (`crypto-research` or `code-execution`) travel in `forwardedProps`; the choice decides which extension's tools and system prompt the thread loads. A parked `place-order` ends the run as an interrupt; Grant sends `resume` with `payload.decision` `grant`, and Deny sends `deny`.
 
-Fill `.env` from `.env.example` (`HTTP_HOST`, `HTTP_PORT`, `SCHEMA`, `SANDBOX_ROOT`, `TENANT_TOKENS`, `DEFAULT_MODEL`, `CATALOG_PATH`, `WEB_DIST`). Set `TENANT_TOKENS` to a JSON object mapping each tenant id to a unique token of at least 32 characters. Put provider keys in `model_providers.json` (see `model_providers.example.json`). `DEFAULT_MODEL` is `provider/modelId` and must exist in that file.
+Fill `.env` from `.env.example` (`HTTP_HOST`, `HTTP_PORT`, `SCHEMA`, `SANDBOX_ROOT`, `TENANT_TOKENS`, `AUTH_JWT_SECRET`, `DEFAULT_MODEL`, `CATALOG_PATH`, `WEB_DIST`). Set `TENANT_TOKENS` to a JSON object mapping each tenant id to a unique token of at least 32 characters, and `AUTH_JWT_SECRET` to a random string of at least 32 characters for signing login JWTs (`AUTH_JWT_TTL_SECONDS` sets their lifetime, default 86400). Put provider keys in `model_providers.json` (see `model_providers.example.json`). `DEFAULT_MODEL` is `provider/modelId` and must exist in that file.
 
 The server logs every request, authentication failure, agent command, and run outcome. The `LOG_*` entries in `.env.example` control it: `LOG_LEVEL` (`DEBUG`/`INFO`/`WARNING`/`ERROR`, default `INFO`), `LOG_FORMAT` (`text`, `json`, or `auto` — text on a terminal, JSON otherwise; the file always gets JSON lines), `LOG_CONSOLE_ENABLED`/`LOG_FILE_ENABLED`, `LOG_DIR` (the file is `agent.log`), `LOG_QUEUE_SIZE` (a full queue drops records and reports the count with the next write), and rotation by `LOG_FILE_MAX_BYTES` keeping `LOG_FILE_BACKUP_COUNT` numbered backups. An unusable `LOG_DIR` disables the file side with one console notice and the server keeps running; `DEBUG` and `INFO` go to stdout, `WARNING` and `ERROR` to stderr.
 
@@ -163,7 +165,7 @@ was started with across approvals and restarts.
 | Idempotency | Start keys are namespaced per tenant, so the same key in two tenants starts two sessions.                                                                                                                              |
 | Threads     | `crypto_threads` keys on `(tenant_id, thread_id)`, so one tenant never reads or overwrites another's thread.                                                                                                           |
 | Ownership   | A session advisory lock on the schema. A second worker gets `StorageBusy`.                                                                                                                                             |
-| HTTP access | A Bearer token maps each request to a configured tenant; a supplied `x-tenant-id` must match.                                                                                                                          |
+| HTTP access | A Bearer token maps each request to a tenant — a static `TENANT_TOKENS` entry or a login JWT — and a supplied `x-tenant-id` must match.                                                                                |
 | Tools       | A workspace per session (`session-<id>` under `sandboxRoot`), minted by the agent, never by the model. Host-mode code execution is file separation only; docker mode adds process and network isolation per execution. |
 
 **One worker per storage.** pi-durable has no cross-process locking; two writers on one schema mint
@@ -329,5 +331,7 @@ docs/                 the research notes this build follows
 - `docs/requirements_design.md` — the Pi research behind this design: what Pi provides, cloud
   deployment routes, and the boundaries encoded here (tool execution isolation and external effects
   need application-level handling).
+- `docs/architecture.md` — the module map, call relationships, and data flows: the run, approval,
+  code-execution, and recovery paths, plus every durable record the system writes.
 - `docs/技术栈推荐：围绕 AI 反馈闭环做选型.md` — the toolchain choice: pnpm, TypeScript 7,
   oxlint/oxfmt, `node --test`.

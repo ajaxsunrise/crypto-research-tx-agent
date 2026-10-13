@@ -1,15 +1,17 @@
 import { openAgentWorker } from "../worker.js";
-import { createTenantAuthenticator } from "./auth.js";
+import { createJwtAuth, createTenantAuthenticator, withJwtAuth } from "./auth.js";
 import { catalogView, readCatalog, registerCatalog } from "./catalog.js";
 import { loadEnvFile, loadServerConfig } from "./config.js";
 import { openLogger } from "./logger.js";
 import { createAgentHttp, listenAgentHttp } from "./server.js";
 import { postgresThreads, type TenantThreads } from "./threads.js";
+import { postgresUsers, type UserDirectory } from "./users.js";
 
 loadEnvFile();
 const config = loadServerConfig(process.env);
 const log = openLogger(process.env);
-const authenticate = createTenantAuthenticator(config.tenantTokens);
+const jwt = createJwtAuth(config.jwtSecret, config.jwtTtlSeconds);
+const authenticate = withJwtAuth(createTenantAuthenticator(config.tenantTokens), jwt);
 const catalog = await readCatalog(config.catalogPath);
 const models = registerCatalog(catalog);
 const worker = await openAgentWorker({
@@ -26,12 +28,13 @@ log.info("worker opened", {
   codeSandbox: config.codeSandbox.kind,
 });
 let threads: TenantThreads | undefined;
+let users: UserDirectory | undefined;
 let listening: Awaited<ReturnType<typeof listenAgentHttp>> | undefined;
 let closing: Promise<void> | undefined;
 
 async function closeResources(): Promise<void> {
   const results = await Promise.allSettled([listening?.close(), worker.close()]);
-  results.push(...(await Promise.allSettled([threads?.close()])));
+  results.push(...(await Promise.allSettled([threads?.close(), users?.close()])));
   const failures = results.filter((result) => result.status === "rejected");
   if (failures.length > 0) {
     throw new AggregateError(
@@ -47,9 +50,15 @@ const initialized = (async () => {
       connectionString: config.connectionString,
       schema: config.schema,
     });
+    users = await postgresUsers({
+      connectionString: config.connectionString,
+      schema: config.schema,
+    });
     const app = createAgentHttp({
       agent: worker,
       threads,
+      users,
+      jwt,
       models,
       defaultModel: config.defaultModel,
       catalog: catalogView(catalog, config.defaultModel),

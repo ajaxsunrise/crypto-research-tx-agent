@@ -10,6 +10,7 @@ const base: NodeJS.ProcessEnv = {
   DEFAULT_MODEL: "faux/faux-1",
   CATALOG_PATH: "./model_providers.json",
   TENANT_TOKENS: '{"local":"0123456789abcdef0123456789abcdef"}',
+  AUTH_JWT_SECRET: "config-test-secret-value-0123456789abcd",
   DB_HOST: "localhost",
   DB_PORT: "5432",
   DB_USER: "postgres",

@@ -71,6 +71,59 @@ function recordOf(value: unknown): Record<string, unknown> | undefined {
   return Object.fromEntries(Object.entries(value));
 }
 
+/** 一次已建立的身份：注册或登录得到的 JWT，或直接输入的访问令牌。 */
+type Session = {
+  readonly token: string;
+  readonly tenantId: string;
+  readonly email?: string;
+};
+
+const sessionKey = "crypto-session";
+
+function parseSession(value: unknown): Session | undefined {
+  const record = recordOf(value);
+  if (
+    record === undefined ||
+    typeof record.token !== "string" ||
+    record.token === "" ||
+    typeof record.tenantId !== "string" ||
+    record.tenantId === "" ||
+    !(record.email === undefined || typeof record.email === "string")
+  ) {
+    return undefined;
+  }
+  return {
+    token: record.token,
+    tenantId: record.tenantId,
+    ...(record.email === undefined ? {} : { email: record.email }),
+  };
+}
+
+function loadSession(): Session | undefined {
+  const raw = localStorage.getItem(sessionKey);
+  if (raw === null) {
+    return undefined;
+  }
+  try {
+    return parseSession(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+/** 服务端错误响应统一是 { message }；读不出来时退回状态码。 */
+async function errorMessageOf(response: Response): Promise<string> {
+  try {
+    const record = recordOf(await response.json());
+    if (record !== undefined && typeof record.message === "string") {
+      return record.message;
+    }
+  } catch {
+    // 响应体不是 JSON 时退回状态码
+  }
+  return `请求失败，状态 ${response.status}。`;
+}
+
 function parseCatalog(value: unknown): Catalog {
   const record = recordOf(value);
   const models = record?.models;
@@ -137,10 +190,18 @@ export function App() {
   const sendingRef = useRef(false);
   const [catalog, setCatalog] = useState<Catalog | undefined>();
   const [catalogError, setCatalogError] = useState<string | undefined>();
-  const [tenant, setTenant] = useState("local");
-  const [token, setToken] = useState("");
+  const [session, setSession] = useState<Session | undefined>(() => loadSession());
+  const tenant = session?.tenantId ?? "";
+  const token = session?.token ?? "";
+  const [authMode, setAuthMode] = useState<"login" | "register" | "token">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [tokenTenant, setTokenTenant] = useState("local");
+  const [tokenValue, setTokenValue] = useState("");
+  const [authError, setAuthError] = useState<string | undefined>();
+  const [authing, setAuthing] = useState(false);
   const [model, setModel] = useState("");
-  const [extension, setExtension] = useState(() => extensionFor("local"));
+  const [extension, setExtension] = useState(() => extensionFor(session?.tenantId ?? "local"));
   const [horizon, setHorizon] = useState("");
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -187,7 +248,71 @@ export function App() {
     snapshot(current);
   }
 
-  // threadId 按租户保存；token 只保存在当前页面内存。
+  function openSession(next: Session) {
+    localStorage.setItem(sessionKey, JSON.stringify(next));
+    setExtension(extensionFor(next.tenantId));
+    setSession(next);
+    setAuthError(undefined);
+  }
+
+  function closeSession(message?: string) {
+    localStorage.removeItem(sessionKey);
+    setSession(undefined);
+    setAuthError(message);
+  }
+
+  async function submitAuth(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (authing) {
+      return;
+    }
+    if (authMode === "token") {
+      const nextTenant = tokenTenant.trim();
+      const nextToken = tokenValue.trim();
+      if (nextTenant === "" || nextToken === "") {
+        setAuthError("租户与访问 token 都要填写。");
+        return;
+      }
+      openSession({ token: nextToken, tenantId: nextTenant });
+      return;
+    }
+    setAuthing(true);
+    setAuthError(undefined);
+    try {
+      if (authMode === "register") {
+        const registered = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email: email.trim(), password }),
+        });
+        if (!registered.ok) {
+          setAuthError(await errorMessageOf(registered));
+          return;
+        }
+      }
+      const logged = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
+      if (!logged.ok) {
+        setAuthError(await errorMessageOf(logged));
+        return;
+      }
+      const body = (await logged.json()) as { token: string; tenantId: string };
+      openSession({
+        token: body.token,
+        tenantId: body.tenantId,
+        email: email.trim().toLowerCase(),
+      });
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "登录请求失败。");
+    } finally {
+      setAuthing(false);
+    }
+  }
+
+  // threadId 按租户保存；登录会话保存在 localStorage，刷新页面后仍在。
   useEffect(() => {
     const key = `crypto-thread:${tenant}`;
     const threadId = localStorage.getItem(key) ?? crypto.randomUUID();
@@ -211,6 +336,10 @@ export function App() {
           signal: controller.signal,
         });
         if (response.status === 404) {
+          return;
+        }
+        if (response.status === 401) {
+          closeSession("登录状态已失效，请重新登录。");
           return;
         }
         if (!response.ok) {
@@ -241,7 +370,7 @@ export function App() {
       subscription.unsubscribe();
       current.abortRun();
     };
-  }, [tenant, token]);
+  }, [session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -252,6 +381,10 @@ export function App() {
     setCatalogError(undefined);
     fetch("/api/models", { headers: { Authorization: `Bearer ${token}`, "x-tenant-id": tenant } })
       .then(async (response) => {
+        if (response.status === 401) {
+          closeSession("登录状态已失效，请重新登录。");
+          return;
+        }
         if (!response.ok) {
           throw new Error(`模型目录请求失败，状态 ${response.status}。`);
         }
@@ -270,7 +403,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [tenant, token]);
+  }, [session]);
 
   const waiting = interrupts[0];
   const choices =
@@ -279,14 +412,6 @@ export function App() {
       : catalog.models.map((item) => ({ id: modelId(item), name: item.name }));
   if (model !== "" && !choices.some((item) => item.id === model)) {
     choices.unshift({ id: model, name: model });
-  }
-
-  function changeTenant(value: string) {
-    setTenant(value);
-    setExtension(extensionFor(value));
-    setMessages([]);
-    setInterrupts([]);
-    setRunError(undefined);
   }
 
   function changeExtension(value: string) {
@@ -359,6 +484,10 @@ export function App() {
           headers: { Authorization: `Bearer ${token}`, "x-tenant-id": tenant },
         },
       );
+      if (response.status === 401) {
+        closeSession("登录状态已失效，请重新登录。");
+        return;
+      }
       if (!response.ok) {
         throw new Error(`会话操作失败，状态 ${response.status}。`);
       }
@@ -375,6 +504,89 @@ export function App() {
     }
   }
 
+  if (session === undefined) {
+    return (
+      <main className="page auth-only">
+        <header className="mast">
+          <p className="eyebrow">Agent</p>
+          <h1>{authMode === "register" ? "注册" : "登录"}</h1>
+        </header>
+        <section className="composer">
+          <div className="actions">
+            {(
+              [
+                ["login", "登录"],
+                ["register", "注册"],
+                ["token", "访问令牌"],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                className={authMode === mode ? "" : "quiet"}
+                onClick={() => {
+                  setAuthMode(mode);
+                  setAuthError(undefined);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <form onSubmit={submitAuth}>
+            {authMode === "token" ? (
+              <>
+                <label>
+                  租户
+                  <input
+                    value={tokenTenant}
+                    autoComplete="off"
+                    onChange={(event) => setTokenTenant(event.target.value)}
+                  />
+                </label>
+                <label>
+                  访问 token
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={tokenValue}
+                    onChange={(event) => setTokenValue(event.target.value)}
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <label>
+                  邮箱
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                  />
+                </label>
+                <label>
+                  密码
+                  <input
+                    type="password"
+                    minLength={8}
+                    autoComplete={authMode === "login" ? "current-password" : "new-password"}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                  />
+                </label>
+              </>
+            )}
+            <button type="submit" disabled={authing}>
+              {authMode === "register" ? "注册并登录" : authMode === "login" ? "登录" : "进入"}
+            </button>
+          </form>
+          {authError !== undefined ? <p className="error">{authError}</p> : null}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="page">
       <header className="mast">
@@ -382,25 +594,15 @@ export function App() {
         <h1>会话</h1>
       </header>
       <section className="composer">
+        <div className="identity">
+          <p>
+            {session.email ?? "访问令牌"} · 租户 {session.tenantId}
+          </p>
+          <button type="button" className="quiet" onClick={() => closeSession()}>
+            退出登录
+          </button>
+        </div>
         <form onSubmit={onSubmit}>
-          <label>
-            租户
-            <input
-              value={tenant}
-              disabled={sending || waiting !== undefined}
-              onChange={(event) => changeTenant(event.target.value)}
-            />
-          </label>
-          <label>
-            访问 token
-            <input
-              type="password"
-              autoComplete="off"
-              value={token}
-              disabled={sending}
-              onChange={(event) => setToken(event.target.value)}
-            />
-          </label>
           <label>
             模型
             <select

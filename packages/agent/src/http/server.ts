@@ -18,14 +18,16 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
+import { z } from "zod";
 
 import { resolveModel, type OpenedAgent } from "../open.js";
-import type { TenantAuthenticator } from "./auth.js";
+import type { JwtAuth, TenantAuthenticator } from "./auth.js";
 import type { ModelCatalogView } from "./catalog.js";
 import { eventsForNewItems, finishForView, type WireEvent } from "./events.js";
 import type { Logger } from "./logger.js";
 import { parseRun, type ParsedRun } from "./parse-run.js";
 import type { TenantThreads } from "./threads.js";
+import type { UserDirectory } from "./users.js";
 
 export type AgentHttpOptions = {
   readonly agent: OpenedAgent;
@@ -34,6 +36,8 @@ export type AgentHttpOptions = {
   readonly defaultModel: string;
   readonly catalog: ModelCatalogView;
   readonly authenticate: TenantAuthenticator;
+  readonly users: UserDirectory;
+  readonly jwt: JwtAuth;
   readonly log: Logger;
   readonly webDistPath?: string;
 };
@@ -206,6 +210,34 @@ function rejectionStatus(rejection: Rejection): 400 | 404 | 409 {
   return rejection.kind === "invalid-request" ? 400 : 409;
 }
 
+const authBodySchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Email is not valid."),
+  password: z.string().min(8, "Password must be at least 8 characters."),
+});
+
+async function authBodyOf(c: {
+  req: { json(): Promise<unknown> };
+}): Promise<
+  | { kind: "valid"; value: { email: string; password: string } }
+  | { kind: "invalid"; message: string }
+> {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return { kind: "invalid", message: "Request body must be JSON." };
+  }
+  const parsed = authBodySchema.safeParse(body);
+  if (!parsed.success) {
+    return { kind: "invalid", message: parsed.error.issues[0]?.message ?? "Invalid body." };
+  }
+  return { kind: "valid", value: parsed.data };
+}
+
 async function writeEvents(
   write: (event: BaseEvent) => Promise<void>,
   events: readonly WireEvent[],
@@ -221,8 +253,9 @@ export function createAgentHttp(
   const app = new Hono<{ Variables: { tenantId: TenantId } }>();
   app.use("*", async (c, next) => {
     let tenant: string | undefined;
-    if (c.req.path === "/agent" || c.req.path.startsWith("/api/")) {
-      const tenantId = options.authenticate(c.req.raw);
+    const openAccess = c.req.path === "/api/auth/register" || c.req.path === "/api/auth/login";
+    if (!openAccess && (c.req.path === "/agent" || c.req.path.startsWith("/api/"))) {
+      const tenantId = await options.authenticate(c.req.raw);
       if (tenantId === undefined) {
         options.log.warning("authentication failed", { method: c.req.method, path: c.req.path });
         return c.json({ message: "Authentication required." }, 401);
@@ -239,6 +272,33 @@ export function createAgentHttp(
       durationMs: elapsedMs(started),
       ...(tenant === undefined ? {} : { tenant }),
     });
+  });
+  app.post("/api/auth/register", async (c) => {
+    const body = await authBodyOf(c);
+    if (body.kind === "invalid") {
+      return c.json({ message: body.message }, 400);
+    }
+    const outcome = await options.users.register(body.value.email, body.value.password);
+    if (outcome.kind === "email-taken") {
+      options.log.warning("registration rejected", { reason: "email-taken" });
+      return c.json({ message: "This email is already registered." }, 409);
+    }
+    options.log.info("user registered", { tenantId: outcome.tenantId });
+    return c.json({ tenantId: outcome.tenantId }, 201);
+  });
+  app.post("/api/auth/login", async (c) => {
+    const body = await authBodyOf(c);
+    if (body.kind === "invalid") {
+      return c.json({ message: body.message }, 400);
+    }
+    const tenantId = await options.users.login(body.value.email, body.value.password);
+    if (tenantId === undefined) {
+      options.log.warning("login failed", {});
+      return c.json({ message: "Email or password is wrong." }, 401);
+    }
+    const token = await options.jwt.issue({ tenantId });
+    options.log.info("user login", { tenantId });
+    return c.json({ token, tenantId });
   });
   app.get("/api/models", (c) => c.json(options.catalog));
   app.get("/api/threads/:threadId", async (c) => {

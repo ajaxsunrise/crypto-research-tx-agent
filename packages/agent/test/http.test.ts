@@ -4,17 +4,19 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createResearchAgent } from "../src/index.js";
-import { createTenantAuthenticator } from "../src/http/auth.js";
+import { createJwtAuth, createTenantAuthenticator, withJwtAuth } from "../src/http/auth.js";
 import { catalogView, parseCatalog } from "../src/http/catalog.js";
 import { openLogger } from "../src/http/logger.js";
 import { listenAgentHttp, createAgentHttp } from "../src/http/server.js";
 import { memoryThreads } from "../src/http/threads.js";
+import { memoryUsers } from "../src/http/users.js";
 import { call, quietLogger, recordingSandbox, say, scripted } from "./fixtures.js";
 
 const tenantTokens: Record<string, string> = Object.fromEntries(
   ["local", "alpha", "beta"].map((tenantId) => [tenantId, randomBytes(32).toString("hex")]),
 );
-const authenticate = createTenantAuthenticator(JSON.stringify(tenantTokens));
+const jwt = createJwtAuth("http-test-secret-value-0123456789abcdef", 3_600);
+const authenticate = withJwtAuth(createTenantAuthenticator(JSON.stringify(tenantTokens)), jwt);
 
 function recordOf(value: unknown): Record<string, unknown> | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -82,6 +84,8 @@ test("a run streams the assistant text and a repeat of the same runId does not a
     authenticate,
     agent,
     threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
@@ -131,6 +135,8 @@ test("the page is served from WEB_DIST", async () => {
     authenticate,
     agent,
     threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
@@ -155,6 +161,8 @@ test("a missing user message is rejected before the stream starts", async () => 
     authenticate,
     agent,
     threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
@@ -183,6 +191,8 @@ test("a run without authentication is rejected", async () => {
     authenticate,
     agent,
     threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
@@ -226,6 +236,8 @@ test("requests and authentication failures land in the log", async () => {
     authenticate,
     agent,
     threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
@@ -273,6 +285,8 @@ test("the same thread id in two tenants is two sessions", async () => {
     authenticate,
     agent,
     threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
@@ -320,6 +334,8 @@ test("a run forwards the extension choice to the thread", async () => {
     authenticate,
     agent,
     threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
@@ -353,6 +369,8 @@ test("a run naming an unknown extension streams an error", async () => {
     authenticate,
     agent,
     threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
@@ -389,6 +407,8 @@ test("a parked order ends as an interrupt and a grant resume sends it once", asy
     authenticate,
     agent,
     threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
@@ -446,6 +466,87 @@ test("a parked order ends as an interrupt and a grant resume sends it once", asy
     assert.equal(again.status, 400);
     const rejected: unknown = await again.json();
     assert.deepEqual(rejected, { message: "This thread is not waiting for approval." });
+  } finally {
+    await server.close();
+    await agent.close();
+  }
+});
+
+test("registration mints a tenant and login issues a JWT that authenticates requests", async () => {
+  const { models, model } = scripted([say("unused")]);
+  const agent = await createResearchAgent({ models, model });
+  const app = createAgentHttp({
+    authenticate,
+    agent,
+    threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
+    models,
+    defaultModel: model,
+    catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
+  });
+  const server = await listenAgentHttp(app, "127.0.0.1", 0);
+  const post = async (path: string, body: unknown) =>
+    fetch(`${server.url}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  try {
+    const invalid = await post("/api/auth/register", {
+      email: "not-an-email",
+      password: "12345678",
+    });
+    assert.equal(invalid.status, 400);
+    const weak = await post("/api/auth/register", { email: "user@example.com", password: "short" });
+    assert.equal(weak.status, 400);
+
+    const registered = await post("/api/auth/register", {
+      email: "User@Example.com",
+      password: "correct horse battery",
+    });
+    assert.equal(registered.status, 201);
+    const created = (await registered.json()) as { tenantId: string };
+    assert.match(created.tenantId, /^u_[0-9a-f]{24}$/);
+
+    const duplicate = await post("/api/auth/register", {
+      email: "user@example.com",
+      password: "another password",
+    });
+    assert.equal(duplicate.status, 409);
+
+    const wrong = await post("/api/auth/login", {
+      email: "user@example.com",
+      password: "wrong password",
+    });
+    assert.equal(wrong.status, 401);
+    const unknown = await post("/api/auth/login", {
+      email: "nobody@example.com",
+      password: "whatever pass",
+    });
+    assert.equal(unknown.status, 401);
+
+    const login = await post("/api/auth/login", {
+      email: "USER@example.com",
+      password: "correct horse battery",
+    });
+    assert.equal(login.status, 200);
+    const session = (await login.json()) as { token: string; tenantId: string };
+    assert.equal(session.tenantId, created.tenantId);
+
+    const allowed = await fetch(`${server.url}/api/models`, {
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    assert.equal(allowed.status, 200);
+    const conflicting = await fetch(`${server.url}/api/models`, {
+      headers: { authorization: `Bearer ${session.token}`, "x-tenant-id": "local" },
+    });
+    assert.equal(conflicting.status, 401);
+    const garbage = await fetch(`${server.url}/api/models`, {
+      headers: { authorization: "Bearer not-a-jwt" },
+    });
+    assert.equal(garbage.status, 401);
   } finally {
     await server.close();
     await agent.close();

@@ -33,6 +33,11 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.page.auth-only {
+  grid-template-columns: minmax(0, 26rem);
+  justify-content: center;
+}
+
 .eyebrow {
   margin: 0;
   font-family: ui-sans-serif, system-ui, sans-serif;
@@ -103,6 +108,20 @@ button.quiet {
 .actions {
   display: flex;
   gap: 0.6rem;
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.85rem;
+}
+
+.identity p {
+  margin: 0;
+  word-break: break-all;
 }
 
 .approval,
