@@ -112,6 +112,7 @@ test("a dead worker's storage is taken over and its order is not resent", { skip
   crashInSandbox("order", `postgres:${schema}`);
 
   // No cleanup ran in the dead worker; Postgres released its lock when the connection dropped.
+  // resumeOnOpen 关闭，让测试自己用 resume 驱动修复；打开时的自动恢复路径由 live-recovery 套件覆盖。
   const { leases, sandbox } = recordingSandbox();
   const worker = await open(
     [
@@ -120,7 +121,7 @@ test("a dead worker's storage is taken over and its order is not resent", { skip
         return say("the order may not have been sent");
       },
     ],
-    { sandbox },
+    { sandbox, resumeOnOpen: false },
   );
   try {
     const found = view(

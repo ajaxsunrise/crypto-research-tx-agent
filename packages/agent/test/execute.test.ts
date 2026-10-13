@@ -463,11 +463,13 @@ test("an approval survives a restart and still sends exactly once", async () => 
 
     const { leases, sandbox } = recordingSandbox();
     const second = scripted([say("order sent")]);
+    // resumeOnOpen 关闭，重开后由测试自己的 approve 驱动发送；打开时的自动恢复路径由 live-recovery 套件覆盖。
     const two = await createResearchAgent({
       directory,
       models: second.models,
       model: second.model,
       sandbox,
+      resumeOnOpen: false,
     });
     try {
       const reloaded = view(

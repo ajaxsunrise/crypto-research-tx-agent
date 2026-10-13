@@ -27,14 +27,25 @@ function restoredMessages(view: SessionView): Message[] {
           id,
           role: "assistant",
           content: "",
-          toolCalls: [{ id: item.callId, type: "function", function: { name: item.name, arguments: item.arguments } }],
+          toolCalls: [
+            {
+              id: item.callId,
+              type: "function",
+              function: { name: item.name, arguments: item.arguments },
+            },
+          ],
         };
       case "tool-result":
         return {
           id: `result:${item.callId}`,
           role: "tool",
           toolCallId: item.callId,
-          content: item.result.kind === "ok" ? item.result.text : item.result.kind === "failed" ? item.result.message : item.result.kind,
+          content:
+            item.result.kind === "ok"
+              ? item.result.text
+              : item.result.kind === "failed"
+                ? item.result.message
+                : item.result.kind,
         };
     }
   });
@@ -144,9 +155,17 @@ export function App() {
       return;
     }
     current.setMessages(restoredMessages(view));
-    current.pendingInterrupts = view.status.kind === "awaiting-approval"
-      ? [{ id: view.status.operationId, reason: "approval", toolCallId: view.status.callId, message: "有一笔订单等待决定。" }]
-      : [];
+    current.pendingInterrupts =
+      view.status.kind === "awaiting-approval"
+        ? [
+            {
+              id: view.status.operationId,
+              reason: "approval",
+              toolCallId: view.status.callId,
+              message: "有一笔订单等待决定。",
+            },
+          ]
+        : [];
     setStatus(view.status.kind);
     if (view.status.kind === "failed") {
       setRunError(view.status.message);
@@ -183,7 +202,7 @@ export function App() {
         if (!response.ok) {
           throw new Error(`会话读取失败，状态 ${response.status}。`);
         }
-        restore(current, await response.json() as SessionView);
+        restore(current, (await response.json()) as SessionView);
       } catch (error) {
         if (!controller.signal.aborted && agentRef.current === current) {
           setRunError(error instanceof Error ? error.message : "会话读取失败。");
@@ -256,7 +275,13 @@ export function App() {
   }
 
   async function run(input: { question?: string; decision?: Choice }) {
-    if (sendingRef.current || model === "" || horizon.trim() === "" || tenant.trim() === "" || token === "") {
+    if (
+      sendingRef.current ||
+      model === "" ||
+      horizon.trim() === "" ||
+      tenant.trim() === "" ||
+      token === ""
+    ) {
       return;
     }
     sendingRef.current = true;
@@ -309,17 +334,20 @@ export function App() {
       setSending(true);
     }
     try {
-      const response = await fetch(`/api/threads/${encodeURIComponent(current.threadId)}/${action}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "x-tenant-id": tenant },
-      });
+      const response = await fetch(
+        `/api/threads/${encodeURIComponent(current.threadId)}/${action}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "x-tenant-id": tenant },
+        },
+      );
       if (!response.ok) {
         throw new Error(`会话操作失败，状态 ${response.status}。`);
       }
       if (action === "cancel") {
         current.abortRun();
       }
-      restore(current, await response.json() as SessionView);
+      restore(current, (await response.json()) as SessionView);
     } catch (error) {
       setRunError(error instanceof Error ? error.message : "会话操作失败。");
     } finally {
@@ -388,7 +416,15 @@ export function App() {
           </label>
           <button
             type="submit"
-            disabled={sending || status === "running" || status === "needs-resume" || waiting !== undefined || model === "" || token === "" || question.trim() === ""}
+            disabled={
+              sending ||
+              status === "running" ||
+              status === "needs-resume" ||
+              waiting !== undefined ||
+              model === "" ||
+              token === "" ||
+              question.trim() === ""
+            }
           >
             发送
           </button>
@@ -396,10 +432,14 @@ export function App() {
         {catalogError !== undefined ? <p className="error">{catalogError}</p> : null}
         {runError !== undefined ? <p className="error">{runError}</p> : null}
         {status === "needs-resume" ? (
-          <button type="button" disabled={sending} onClick={() => void control("resume")}>恢复任务</button>
+          <button type="button" disabled={sending} onClick={() => void control("resume")}>
+            恢复任务
+          </button>
         ) : null}
         {sending || status === "running" || status === "needs-resume" || waiting !== undefined ? (
-          <button type="button" className="quiet" onClick={() => void control("cancel")}>取消运行</button>
+          <button type="button" className="quiet" onClick={() => void control("cancel")}>
+            取消运行
+          </button>
         ) : null}
         {waiting !== undefined ? (
           <div className="approval">

@@ -210,7 +210,8 @@ export function researchExtension(input: { sandbox: LeaseExecutor; now: () => Ti
 
   const placeOrder = defineTool({
     name: "place-order",
-    description: "Request an order in a response containing only this tool call. Waits for approval.",
+    description:
+      "Request an order in a response containing only this tool call. Waits for approval.",
     parameters: Type.Object({
       symbol: Type.String({ minLength: 1 }),
       side: Type.Union([Type.Literal("buy"), Type.Literal("sell")]),

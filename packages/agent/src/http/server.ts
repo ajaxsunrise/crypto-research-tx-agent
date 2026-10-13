@@ -4,6 +4,7 @@ import { EventType, type BaseEvent } from "@ag-ui/core";
 import { EventEncoder } from "@ag-ui/encoder";
 import {
   brand,
+  type AgentCommand,
   type CallId,
   type ExecuteResult,
   type OperationId,
@@ -22,6 +23,7 @@ import { resolveModel, type OpenedAgent } from "../open.js";
 import type { TenantAuthenticator } from "./auth.js";
 import type { ModelCatalogView } from "./catalog.js";
 import { eventsForNewItems, finishForView, type WireEvent } from "./events.js";
+import type { Logger } from "./logger.js";
 import { parseRun, type ParsedRun } from "./parse-run.js";
 import type { TenantThreads } from "./threads.js";
 
@@ -32,6 +34,7 @@ export type AgentHttpOptions = {
   readonly defaultModel: string;
   readonly catalog: ModelCatalogView;
   readonly authenticate: TenantAuthenticator;
+  readonly log: Logger;
   readonly webDistPath?: string;
 };
 
@@ -64,12 +67,45 @@ type Ready =
       readonly view: SessionView;
     };
 
+function elapsedMs(started: bigint): number {
+  return Math.round((Number(process.hrtime.bigint() - started) / 1e6) * 1000) / 1000;
+}
+
+// Every command goes through here so each one lands in the log with its outcome.
+async function execute(options: AgentHttpOptions, command: AgentCommand): Promise<ExecuteResult> {
+  const started = process.hrtime.bigint();
+  const result = await options.agent.execute(command);
+  const fields = {
+    kind: command.kind,
+    tenantId: command.tenantId,
+    outcome: result.kind === "ok" ? "ok" : result.rejection.kind,
+    durationMs: elapsedMs(started),
+    ...("threadId" in command && command.threadId !== undefined
+      ? { threadId: command.threadId }
+      : {}),
+    ...("sessionId" in command && command.sessionId !== undefined
+      ? { sessionId: command.sessionId }
+      : {}),
+  };
+  // reload also serves the 250ms polling, so it stays at DEBUG.
+  if (result.kind === "ok") {
+    if (command.kind === "reload") {
+      options.log.debug("agent command", fields);
+    } else {
+      options.log.info("agent command", fields);
+    }
+  } else {
+    options.log.warning("agent command rejected", fields);
+  }
+  return result;
+}
+
 async function loadThread(
   options: AgentHttpOptions,
   tenantId: TenantId,
   threadId: string,
 ): Promise<ExecuteResult> {
-  const durable = await options.agent.execute({ kind: "reload", tenantId, threadId });
+  const durable = await execute(options, { kind: "reload", tenantId, threadId });
   if (durable.kind === "ok" || durable.rejection.kind !== "session-not-found") {
     return durable;
   }
@@ -77,7 +113,7 @@ async function loadThread(
   if (stored === undefined) {
     return durable;
   }
-  return options.agent.execute({ kind: "reload", tenantId, sessionId: brand(stored, "SessionId") });
+  return execute(options, { kind: "reload", tenantId, sessionId: brand(stored, "SessionId") });
 }
 
 async function prepare(
@@ -146,7 +182,7 @@ async function startRun(
   if (question === undefined || horizon === undefined) {
     throw new Error("A run needs a user message and forwardedProps.horizon.");
   }
-  return options.agent.execute({
+  return execute(options, {
     kind: "start",
     tenantId,
     idempotencyKey: JSON.stringify([ready.run.threadId, ready.run.runId]),
@@ -182,14 +218,25 @@ export function createAgentHttp(
 ): Hono<{ Variables: { tenantId: TenantId } }> {
   const app = new Hono<{ Variables: { tenantId: TenantId } }>();
   app.use("*", async (c, next) => {
+    let tenant: string | undefined;
     if (c.req.path === "/agent" || c.req.path.startsWith("/api/")) {
       const tenantId = options.authenticate(c.req.raw);
       if (tenantId === undefined) {
+        options.log.warning("authentication failed", { method: c.req.method, path: c.req.path });
         return c.json({ message: "Authentication required." }, 401);
       }
+      tenant = tenantId;
       c.set("tenantId", tenantId);
     }
+    const started = process.hrtime.bigint();
     await next();
+    options.log.info("request", {
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      durationMs: elapsedMs(started),
+      ...(tenant === undefined ? {} : { tenant }),
+    });
   });
   app.get("/api/models", (c) => c.json(options.catalog));
   app.get("/api/threads/:threadId", async (c) => {
@@ -212,11 +259,7 @@ export function createAgentHttp(
           rejectionStatus(current.rejection),
         );
       }
-      const result = await options.agent.execute({
-        kind,
-        tenantId,
-        sessionId: current.view.sessionId,
-      });
+      const result = await execute(options, { kind, tenantId, sessionId: current.view.sessionId });
       if (result.kind !== "ok") {
         return c.json(
           { message: rejectionMessage(result.rejection) },
@@ -274,12 +317,17 @@ export function createAgentHttp(
               view: ready.view,
             }),
           );
+          options.log.info("run finished", {
+            threadId: ready.run.threadId,
+            runId: ready.run.runId,
+            status: "awaiting-approval",
+          });
           return;
         }
 
         const execution =
           ready.kind === "approve"
-            ? options.agent.execute({
+            ? execute(options, {
                 kind: "approve",
                 tenantId,
                 sessionId: ready.sessionId,
@@ -288,7 +336,7 @@ export function createAgentHttp(
                 decision: ready.decision,
               })
             : ready.kind === "resume"
-              ? options.agent.execute({ kind: "resume", tenantId, sessionId: ready.sessionId })
+              ? execute(options, { kind: "resume", tenantId, sessionId: ready.sessionId })
               : startRun(options, tenantId, ready);
         const completion = execution.then(
           (result) => ({ kind: "completed" as const, result }),
@@ -329,6 +377,11 @@ export function createAgentHttp(
         }
         if (result.kind !== "ok") {
           await write({ type: EventType.RUN_ERROR, message: rejectionMessage(result.rejection) });
+          options.log.warning("run rejected", {
+            threadId: ready.run.threadId,
+            runId: ready.run.runId,
+            rejection: rejectionMessage(result.rejection),
+          });
           return;
         }
         await append(result.view);
@@ -339,9 +392,19 @@ export function createAgentHttp(
             view: result.view,
           }),
         );
+        options.log.info("run finished", {
+          threadId: ready.run.threadId,
+          runId: ready.run.runId,
+          status: result.view.status.kind,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "failed";
         await write({ type: EventType.RUN_ERROR, message });
+        options.log.error("run failed", {
+          threadId: ready.run.threadId,
+          runId: ready.run.runId,
+          error: message,
+        });
       } finally {
         c.req.raw.signal.removeEventListener("abort", abort);
       }

@@ -31,7 +31,14 @@ test("a read interrupted by a dead process reruns on resume", async () => {
         return say("funding was flat");
       },
     ]);
-    const agent = await createResearchAgent({ directory, models, model, sandbox });
+    // resumeOnOpen 关闭，让测试自己用 resume 驱动恢复；打开时的自动恢复路径由 live-recovery 套件覆盖。
+    const agent = await createResearchAgent({
+      directory,
+      models,
+      model,
+      sandbox,
+      resumeOnOpen: false,
+    });
     try {
       // The same key finds the session the dead process created.
       const found = view(
@@ -67,7 +74,14 @@ test("an order interrupted by a dead process is never sent again", async () => {
         return say("the order may not have landed");
       },
     ]);
-    const agent = await createResearchAgent({ directory, models, model, sandbox });
+    // resumeOnOpen 关闭，让测试自己用 resume 驱动修复；打开时的自动恢复路径由 live-recovery 套件覆盖。
+    const agent = await createResearchAgent({
+      directory,
+      models,
+      model,
+      sandbox,
+      resumeOnOpen: false,
+    });
     try {
       const found = view(
         await agent.execute({

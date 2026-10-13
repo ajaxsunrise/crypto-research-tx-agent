@@ -9,6 +9,7 @@ import { createTenantAuthenticator } from "../src/http/auth.js";
 import { loadServerConfig } from "../src/http/config.js";
 import { createAgentHttp } from "../src/http/server.js";
 import { memoryThreads } from "../src/http/threads.js";
+import { quietLogger } from "./fixtures.js";
 
 test("Bearer authentication determines the tenant and rejects conflicting tenant headers", () => {
   const alpha = randomBytes(32).toString("hex");
@@ -75,6 +76,7 @@ test("HTTP protects API routes and returns missing durable threads without invok
     defaultModel: "",
     catalog: { defaultModelId: "", models: [] },
     authenticate: createTenantAuthenticator(JSON.stringify({ alpha: token })),
+    log: quietLogger(),
   });
   const headers = { authorization: `Bearer ${token}` };
   try {

@@ -15,10 +15,17 @@ import {
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
 
+import { openLogger, type Logger } from "../src/http/logger.js";
+
 export const question = "What changed in BTC funding over 24h?";
 
 /** The tenant most tests act as. */
 export const tenant = brand("local", "TenantId");
+
+/** 关闭全部输出的 logger，给考察其他行为的测试使用。 */
+export function quietLogger(): Logger {
+  return openLogger({ LOG_CONSOLE_ENABLED: "false", LOG_FILE_ENABLED: "false" });
+}
 
 /** The tenant the crash child and its parent both use, so the owner row matches across processes. */
 export const crashTenant = brand("worker", "TenantId");

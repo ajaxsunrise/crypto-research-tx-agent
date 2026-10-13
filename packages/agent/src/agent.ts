@@ -487,15 +487,22 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
     const scopedKey = `t:${command.tenantId}:${key}`;
     const claim = await harness.commit(async (tx: Tx) => {
       const started = await tx.doc(StartDoc, scopedKey, { conversationId: 0 });
-      const thread = threadId === undefined
-        ? undefined
-        : await tx.doc(ThreadDoc, `t:${command.tenantId}:${threadId}`, { conversationId: 0 });
+      const thread =
+        threadId === undefined
+          ? undefined
+          : await tx.doc(ThreadDoc, `t:${command.tenantId}:${threadId}`, { conversationId: 0 });
       if (started.conversationId !== 0) {
-        const owner = await tx.doc(SessionOwnerDoc, String(started.conversationId), { tenantId: "" });
+        const owner = await tx.doc(SessionOwnerDoc, String(started.conversationId), {
+          tenantId: "",
+        });
         if (owner.tenantId !== command.tenantId) {
           return { kind: "session-not-found" as const };
         }
-        if (thread !== undefined && thread.conversationId !== 0 && thread.conversationId !== started.conversationId) {
+        if (
+          thread !== undefined &&
+          thread.conversationId !== 0 &&
+          thread.conversationId !== started.conversationId
+        ) {
           return { kind: "thread-mismatch" as const };
         }
         if (thread !== undefined) {
@@ -586,7 +593,10 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
       return rejected("session-not-found");
     }
     const run = await runOf(conversation.id);
-    if (claim.kind === "existing" && (run?.pendingStart !== scopedKey || busy.has(conversation.id))) {
+    if (
+      claim.kind === "existing" &&
+      (run?.pendingStart !== scopedKey || busy.has(conversation.id))
+    ) {
       // A retry of a start that already submitted: report it, do not run it again.
       return ok(conversation);
     }
@@ -808,7 +818,9 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
     return ok(conversation);
   }
 
-  async function reload(command: Extract<AgentCommand, { kind: "reload" }>): Promise<ExecuteResult> {
+  async function reload(
+    command: Extract<AgentCommand, { kind: "reload" }>,
+  ): Promise<ExecuteResult> {
     if (command.sessionId !== undefined) {
       return read({ tenantId: command.tenantId, sessionId: command.sessionId });
     }

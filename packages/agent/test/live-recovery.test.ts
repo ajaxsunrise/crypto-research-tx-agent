@@ -33,7 +33,8 @@ const config = live
       TENANT_TOKENS: JSON.stringify({ live_alpha: randomUUID() + randomUUID() }),
     })
   : undefined;
-const models = config === undefined ? undefined : registerCatalog(await readCatalog(config.catalogPath));
+const models =
+  config === undefined ? undefined : registerCatalog(await readCatalog(config.catalogPath));
 const alpha = brand("live_alpha", "TenantId");
 const beta = brand("live_beta", "TenantId");
 
@@ -152,210 +153,336 @@ async function setup(t: TestContext) {
   };
 }
 
-test("真实模型审批、取消、并发控制与多租户 thread 持久化", { skip: !live, timeout: 180_000 }, async (t) => {
-  const state = await setup(t);
-  let worker = await state.open();
-  const threadId = randomUUID();
-  const deniedStart = view(await worker.execute({
-    kind: "start",
-    tenantId: alpha,
-    idempotencyKey: "shared-key",
-    threadId,
-    brief: orderBrief(),
-  }));
-  const deniedOrder = awaiting(deniedStart);
-  assert.equal(view(await worker.execute({ kind: "reload", tenantId: alpha, threadId })).sessionId, deniedStart.sessionId);
-  for (const command of [
-    { kind: "reload", tenantId: beta, sessionId: deniedStart.sessionId } as const,
-    { kind: "reload", tenantId: beta, threadId } as const,
-    { kind: "approve", tenantId: beta, sessionId: deniedStart.sessionId,
-      callId: deniedOrder.callId, operationId: deniedOrder.operationId, decision: "grant" } as const,
-  ]) {
-    assert.deepEqual(await worker.execute(command), {
-      kind: "rejected", rejection: { kind: "session-not-found" },
-    });
-  }
-  const other = view(await worker.execute({
-    kind: "start", tenantId: beta, idempotencyKey: "shared-key", threadId,
-    brief: { question: "Reply with two words about crypto. Call no tools.", horizon: "24h" },
-  }));
-  assert.equal(other.status.kind, "completed");
-  assert.notEqual(other.sessionId, deniedStart.sessionId);
-  assert.equal(view(await worker.execute({ kind: "reload", tenantId: beta, threadId })).sessionId, other.sessionId);
-
-  const denial = {
-    kind: "approve", tenantId: alpha, sessionId: deniedStart.sessionId,
-    callId: deniedOrder.callId, operationId: deniedOrder.operationId, decision: "deny",
-  } as const;
-  const parallel = await Promise.all([
-    worker.execute(denial),
-    worker.execute({ kind: "resume", tenantId: alpha, sessionId: deniedStart.sessionId }),
-  ]);
-  assert.ok(parallel.every((result) =>
-    result.kind === "ok" || (result.kind === "rejected" && result.rejection.kind === "in-progress"),
-  ));
-  let denied = view(await worker.execute({ kind: "reload", tenantId: alpha, threadId }));
-  if (denied.status.kind === "awaiting-approval") {
-    denied = view(await worker.execute(denial));
-  }
-  assert.equal(denied.status.kind, "completed");
-  const deniedResults = denied.transcript.filter((item) => item.kind === "tool-result" && item.callId === deniedOrder.callId);
-  assert.deepEqual(deniedResults, [{ kind: "tool-result", callId: deniedOrder.callId, result: { kind: "denied" } }]);
-  assert.equal(await state.executions(deniedOrder.operationId), 0);
-  assert.equal(await state.continuations(denied.sessionId, deniedOrder.operationId), 1);
-
-  const grantThread = randomUUID();
-  const grantStart = view(await worker.execute({
-    kind: "start", tenantId: alpha, idempotencyKey: "grant", threadId: grantThread, brief: orderBrief(),
-  }));
-  const grantOrder = awaiting(grantStart);
-  const grant = {
-    kind: "approve", tenantId: alpha, sessionId: grantStart.sessionId,
-    callId: grantOrder.callId, operationId: grantOrder.operationId, decision: "grant",
-  } as const;
-  const granted = view(await worker.execute(grant));
-  assert.equal(granted.status.kind, "completed");
-  const grantResults = granted.transcript.filter((item) => item.kind === "tool-result" && item.callId === grantOrder.callId);
-  assert.deepEqual(grantResults, [{ kind: "tool-result", callId: grantOrder.callId,
-    result: { kind: "failed", message: "Order execution is not configured." } }]);
-  assert.deepEqual(await worker.execute(grant), {
-    kind: "rejected", rejection: { kind: "not-awaiting-approval" },
-  });
-  assert.equal(await state.executions(grantOrder.operationId), 1);
-  assert.equal(await state.continuations(granted.sessionId, grantOrder.operationId), 1);
-  const resumed = view(await worker.execute({ kind: "resume", tenantId: alpha, sessionId: granted.sessionId }));
-  assert.deepEqual(resumed, granted);
-  assert.equal(await state.executions(grantOrder.operationId), 1);
-
-  const cancelStart = view(await worker.execute({
-    kind: "start", tenantId: alpha, idempotencyKey: "cancel", threadId: randomUUID(), brief: orderBrief(),
-  }));
-  const cancelOrder = awaiting(cancelStart);
-  state.blockExecution(cancelOrder.operationId);
-  const approving = worker.execute({
-    kind: "approve", tenantId: alpha, sessionId: cancelStart.sessionId,
-    callId: cancelOrder.callId, operationId: cancelOrder.operationId, decision: "grant",
-  });
-  await state.waitForExecution(cancelOrder.operationId);
-  const cancelled = view(await worker.execute({ kind: "cancel", tenantId: alpha, sessionId: cancelStart.sessionId }));
-  assert.equal(cancelled.status.kind, "cancelled");
-  await approving;
-  await state.releaseExecution(cancelOrder.operationId);
-  const cancelledResume = view(await worker.execute({ kind: "resume", tenantId: alpha, sessionId: cancelled.sessionId }));
-  assert.equal(cancelledResume.status.kind, "cancelled");
-  assert.equal(await state.continuations(cancelled.sessionId, cancelOrder.operationId), 0);
-  assert.equal(await state.executions(cancelOrder.operationId), 1);
-
-  const closeStart = view(await worker.execute({
-    kind: "start", tenantId: alpha, idempotencyKey: "close", threadId: randomUUID(), brief: orderBrief(),
-  }));
-  const closeOrder = awaiting(closeStart);
-  state.blockExecution(closeOrder.operationId);
-  const closingApproval = worker.execute({
-    kind: "approve", tenantId: alpha, sessionId: closeStart.sessionId,
-    callId: closeOrder.callId, operationId: closeOrder.operationId, decision: "grant",
-  });
-  await state.waitForExecution(closeOrder.operationId);
-  const closing = state.close(worker);
-  await closingApproval;
-  await state.releaseExecution(closeOrder.operationId);
-  await closing;
-  worker = await state.open();
-  const recoveredOrder = view(await worker.execute({
-    kind: "reload", tenantId: alpha, sessionId: closeStart.sessionId,
-  }));
-  assert.equal(recoveredOrder.status.kind, "completed");
-  assert.ok(recoveredOrder.transcript.some((item) =>
-    item.kind === "tool-result" && item.callId === closeOrder.callId &&
-    item.result.kind === "interrupted",
-  ));
-  assert.equal(await state.executions(closeOrder.operationId), 1);
-  assert.equal(await state.continuations(closeStart.sessionId, closeOrder.operationId), 1);
-
-  await state.close(worker);
-  worker = await state.open();
-  assert.deepEqual(view(await worker.execute({ kind: "reload", tenantId: alpha, threadId })), denied);
-  assert.deepEqual(view(await worker.execute({ kind: "reload", tenantId: beta, threadId })), other);
-  assert.deepEqual(view(await worker.execute({ kind: "reload", tenantId: alpha, threadId: grantThread })), granted);
-  assert.equal(await state.executions(grantOrder.operationId), 1);
-  assert.equal(await state.continuations(granted.sessionId, grantOrder.operationId), 1);
-  assert.equal(view(await worker.execute({ kind: "reload", tenantId: alpha, sessionId: cancelled.sessionId })).status.kind, "cancelled");
-  assert.equal(await state.continuations(cancelled.sessionId, cancelOrder.operationId), 0);
-});
-
-test("SIGKILL 后 openAgentWorker 自动恢复已持久保存的 pending start", { skip: !live, timeout: 90_000 }, async (t) => {
-  const state = await setup(t);
-  const child = fork(resolve(".scratch/live-recovery-child.mjs"), [state.schema, state.root], {
-    stdio: ["ignore", "inherit", "inherit", "ipc"],
-    execArgv: [],
-  });
-  const exited = once(child, "exit");
-  let locked = false;
-  try {
-    await Promise.race([
-      once(child, "message").then(([message]) => assert.deepEqual(message, { kind: "ready" })),
-      exited.then(([code, signal]) => { throw new Error(`Worker exited before ready: ${code} ${signal}`); }),
-    ]);
-    await state.admin.query("BEGIN");
-    await state.admin.query(`LOCK TABLE "${state.schema}".submissions IN ACCESS EXCLUSIVE MODE`);
-    locked = true;
+test(
+  "真实模型审批、取消、并发控制与多租户 thread 持久化",
+  { skip: !live, timeout: 180_000 },
+  async (t) => {
+    const state = await setup(t);
+    let worker = await state.open();
     const threadId = randomUUID();
-    child.send({
-      kind: "start", tenantId: alpha, idempotencyKey: "pending", threadId,
-      brief: { question: "Reply with one sentence about Bitcoin. Call no tools.", horizon: "24h" },
+    const deniedStart = view(
+      await worker.execute({
+        kind: "start",
+        tenantId: alpha,
+        idempotencyKey: "shared-key",
+        threadId,
+        brief: orderBrief(),
+      }),
+    );
+    const deniedOrder = awaiting(deniedStart);
+    assert.equal(
+      view(await worker.execute({ kind: "reload", tenantId: alpha, threadId })).sessionId,
+      deniedStart.sessionId,
+    );
+    for (const command of [
+      { kind: "reload", tenantId: beta, sessionId: deniedStart.sessionId } as const,
+      { kind: "reload", tenantId: beta, threadId } as const,
+      {
+        kind: "approve",
+        tenantId: beta,
+        sessionId: deniedStart.sessionId,
+        callId: deniedOrder.callId,
+        operationId: deniedOrder.operationId,
+        decision: "grant",
+      } as const,
+    ]) {
+      assert.deepEqual(await worker.execute(command), {
+        kind: "rejected",
+        rejection: { kind: "session-not-found" },
+      });
+    }
+    const other = view(
+      await worker.execute({
+        kind: "start",
+        tenantId: beta,
+        idempotencyKey: "shared-key",
+        threadId,
+        brief: { question: "Reply with two words about crypto. Call no tools.", horizon: "24h" },
+      }),
+    );
+    assert.equal(other.status.kind, "completed");
+    assert.notEqual(other.sessionId, deniedStart.sessionId);
+    assert.equal(
+      view(await worker.execute({ kind: "reload", tenantId: beta, threadId })).sessionId,
+      other.sessionId,
+    );
+
+    const denial = {
+      kind: "approve",
+      tenantId: alpha,
+      sessionId: deniedStart.sessionId,
+      callId: deniedOrder.callId,
+      operationId: deniedOrder.operationId,
+      decision: "deny",
+    } as const;
+    const parallel = await Promise.all([
+      worker.execute(denial),
+      worker.execute({ kind: "resume", tenantId: alpha, sessionId: deniedStart.sessionId }),
+    ]);
+    assert.ok(
+      parallel.every(
+        (result) =>
+          result.kind === "ok" ||
+          (result.kind === "rejected" && result.rejection.kind === "in-progress"),
+      ),
+    );
+    let denied = view(await worker.execute({ kind: "reload", tenantId: alpha, threadId }));
+    if (denied.status.kind === "awaiting-approval") {
+      denied = view(await worker.execute(denial));
+    }
+    assert.equal(denied.status.kind, "completed");
+    const deniedResults = denied.transcript.filter(
+      (item) => item.kind === "tool-result" && item.callId === deniedOrder.callId,
+    );
+    assert.deepEqual(deniedResults, [
+      { kind: "tool-result", callId: deniedOrder.callId, result: { kind: "denied" } },
+    ]);
+    assert.equal(await state.executions(deniedOrder.operationId), 0);
+    assert.equal(await state.continuations(denied.sessionId, deniedOrder.operationId), 1);
+
+    const grantThread = randomUUID();
+    const grantStart = view(
+      await worker.execute({
+        kind: "start",
+        tenantId: alpha,
+        idempotencyKey: "grant",
+        threadId: grantThread,
+        brief: orderBrief(),
+      }),
+    );
+    const grantOrder = awaiting(grantStart);
+    const grant = {
+      kind: "approve",
+      tenantId: alpha,
+      sessionId: grantStart.sessionId,
+      callId: grantOrder.callId,
+      operationId: grantOrder.operationId,
+      decision: "grant",
+    } as const;
+    const granted = view(await worker.execute(grant));
+    assert.equal(granted.status.kind, "completed");
+    const grantResults = granted.transcript.filter(
+      (item) => item.kind === "tool-result" && item.callId === grantOrder.callId,
+    );
+    assert.deepEqual(grantResults, [
+      {
+        kind: "tool-result",
+        callId: grantOrder.callId,
+        result: { kind: "failed", message: "Order execution is not configured." },
+      },
+    ]);
+    assert.deepEqual(await worker.execute(grant), {
+      kind: "rejected",
+      rejection: { kind: "not-awaiting-approval" },
     });
-    let sessionId: SessionId | undefined;
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline && sessionId === undefined) {
-      const records = await state.admin.query<{ key_value: string; content: string }>(
-        `SELECT d.key_value, r.content FROM "${state.schema}".documents d
+    assert.equal(await state.executions(grantOrder.operationId), 1);
+    assert.equal(await state.continuations(granted.sessionId, grantOrder.operationId), 1);
+    const resumed = view(
+      await worker.execute({ kind: "resume", tenantId: alpha, sessionId: granted.sessionId }),
+    );
+    assert.deepEqual(resumed, granted);
+    assert.equal(await state.executions(grantOrder.operationId), 1);
+
+    const cancelStart = view(
+      await worker.execute({
+        kind: "start",
+        tenantId: alpha,
+        idempotencyKey: "cancel",
+        threadId: randomUUID(),
+        brief: orderBrief(),
+      }),
+    );
+    const cancelOrder = awaiting(cancelStart);
+    state.blockExecution(cancelOrder.operationId);
+    const approving = worker.execute({
+      kind: "approve",
+      tenantId: alpha,
+      sessionId: cancelStart.sessionId,
+      callId: cancelOrder.callId,
+      operationId: cancelOrder.operationId,
+      decision: "grant",
+    });
+    await state.waitForExecution(cancelOrder.operationId);
+    const cancelled = view(
+      await worker.execute({ kind: "cancel", tenantId: alpha, sessionId: cancelStart.sessionId }),
+    );
+    assert.equal(cancelled.status.kind, "cancelled");
+    await approving;
+    await state.releaseExecution(cancelOrder.operationId);
+    const cancelledResume = view(
+      await worker.execute({ kind: "resume", tenantId: alpha, sessionId: cancelled.sessionId }),
+    );
+    assert.equal(cancelledResume.status.kind, "cancelled");
+    assert.equal(await state.continuations(cancelled.sessionId, cancelOrder.operationId), 0);
+    assert.equal(await state.executions(cancelOrder.operationId), 1);
+
+    const closeStart = view(
+      await worker.execute({
+        kind: "start",
+        tenantId: alpha,
+        idempotencyKey: "close",
+        threadId: randomUUID(),
+        brief: orderBrief(),
+      }),
+    );
+    const closeOrder = awaiting(closeStart);
+    state.blockExecution(closeOrder.operationId);
+    const closingApproval = worker.execute({
+      kind: "approve",
+      tenantId: alpha,
+      sessionId: closeStart.sessionId,
+      callId: closeOrder.callId,
+      operationId: closeOrder.operationId,
+      decision: "grant",
+    });
+    await state.waitForExecution(closeOrder.operationId);
+    const closing = state.close(worker);
+    await closingApproval;
+    await state.releaseExecution(closeOrder.operationId);
+    await closing;
+    worker = await state.open();
+    const recoveredOrder = view(
+      await worker.execute({
+        kind: "reload",
+        tenantId: alpha,
+        sessionId: closeStart.sessionId,
+      }),
+    );
+    assert.equal(recoveredOrder.status.kind, "completed");
+    assert.ok(
+      recoveredOrder.transcript.some(
+        (item) =>
+          item.kind === "tool-result" &&
+          item.callId === closeOrder.callId &&
+          item.result.kind === "interrupted",
+      ),
+    );
+    assert.equal(await state.executions(closeOrder.operationId), 1);
+    assert.equal(await state.continuations(closeStart.sessionId, closeOrder.operationId), 1);
+
+    await state.close(worker);
+    worker = await state.open();
+    assert.deepEqual(
+      view(await worker.execute({ kind: "reload", tenantId: alpha, threadId })),
+      denied,
+    );
+    assert.deepEqual(
+      view(await worker.execute({ kind: "reload", tenantId: beta, threadId })),
+      other,
+    );
+    assert.deepEqual(
+      view(await worker.execute({ kind: "reload", tenantId: alpha, threadId: grantThread })),
+      granted,
+    );
+    assert.equal(await state.executions(grantOrder.operationId), 1);
+    assert.equal(await state.continuations(granted.sessionId, grantOrder.operationId), 1);
+    assert.equal(
+      view(
+        await worker.execute({ kind: "reload", tenantId: alpha, sessionId: cancelled.sessionId }),
+      ).status.kind,
+      "cancelled",
+    );
+    assert.equal(await state.continuations(cancelled.sessionId, cancelOrder.operationId), 0);
+  },
+);
+
+test(
+  "SIGKILL 后 openAgentWorker 自动恢复已持久保存的 pending start",
+  { skip: !live, timeout: 90_000 },
+  async (t) => {
+    const state = await setup(t);
+    const child = fork(resolve(".scratch/live-recovery-child.mjs"), [state.schema, state.root], {
+      stdio: ["ignore", "inherit", "inherit", "ipc"],
+      execArgv: [],
+    });
+    const exited = once(child, "exit");
+    let locked = false;
+    try {
+      await Promise.race([
+        once(child, "message").then(([message]) => assert.deepEqual(message, { kind: "ready" })),
+        exited.then(([code, signal]) => {
+          throw new Error(`Worker exited before ready: ${code} ${signal}`);
+        }),
+      ]);
+      await state.admin.query("BEGIN");
+      await state.admin.query(`LOCK TABLE "${state.schema}".submissions IN ACCESS EXCLUSIVE MODE`);
+      locked = true;
+      const threadId = randomUUID();
+      child.send({
+        kind: "start",
+        tenantId: alpha,
+        idempotencyKey: "pending",
+        threadId,
+        brief: {
+          question: "Reply with one sentence about Bitcoin. Call no tools.",
+          horizon: "24h",
+        },
+      });
+      let sessionId: SessionId | undefined;
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline && sessionId === undefined) {
+        const records = await state.admin.query<{ key_value: string; content: string }>(
+          `SELECT d.key_value, r.content FROM "${state.schema}".documents d
          JOIN "${state.schema}".document_revisions r ON r.document_id = d.id
          WHERE d.kind = $1 AND r.kind = 'base' ORDER BY r.seq DESC LIMIT 1`,
-        [JSON.stringify("crypto.run")],
-      );
-      const record = records.rows[0];
-      if (record !== undefined) {
-        const run = JSON.parse(record.content) as RunState;
-        if (run.pendingStart === "t:live_alpha:pending") {
-          assert.equal(run.submissionId, 0);
-          assert.deepEqual(run.outcome, { kind: "open" });
-          sessionId = brand(JSON.parse(record.key_value) as string, "SessionId");
+          [JSON.stringify("crypto.run")],
+        );
+        const record = records.rows[0];
+        if (record !== undefined) {
+          const run = JSON.parse(record.content) as RunState;
+          if (run.pendingStart === "t:live_alpha:pending") {
+            assert.equal(run.submissionId, 0);
+            assert.deepEqual(run.outcome, { kind: "open" });
+            sessionId = brand(JSON.parse(record.key_value) as string, "SessionId");
+          }
+        }
+        if (sessionId === undefined) {
+          await setTimeout(10);
         }
       }
-      if (sessionId === undefined) {
-        await setTimeout(10);
+      assert.ok(sessionId, "必须观察到已经提交的 pending start。");
+      child.kill("SIGKILL");
+      const [code, signal] = await exited;
+      assert.equal(code, null);
+      assert.equal(signal, "SIGKILL");
+      await state.admin.query("ROLLBACK");
+      locked = false;
+      const worker = await state.open();
+      const recovered = view(await worker.execute({ kind: "reload", tenantId: alpha, threadId }));
+      assert.equal(recovered.sessionId, sessionId);
+      assert.equal(recovered.status.kind, "completed");
+      assert.equal(recovered.transcript.filter((item) => item.kind === "user").length, 1);
+      const retried = view(
+        await worker.execute({
+          kind: "start",
+          tenantId: alpha,
+          idempotencyKey: "pending",
+          threadId,
+          brief: {
+            question: "Reply with one sentence about Bitcoin. Call no tools.",
+            horizon: "24h",
+          },
+        }),
+      );
+      assert.deepEqual(retried, recovered);
+      assert.deepEqual(await worker.execute({ kind: "reload", tenantId: beta, sessionId }), {
+        kind: "rejected",
+        rejection: { kind: "session-not-found" },
+      });
+      await state.close(worker);
+      const reopened = await state.open();
+      assert.deepEqual(
+        view(await reopened.execute({ kind: "reload", tenantId: alpha, threadId })),
+        recovered,
+      );
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+        await exited;
+      }
+      if (locked) {
+        await state.admin.query("ROLLBACK");
       }
     }
-    assert.ok(sessionId, "必须观察到已经提交的 pending start。");
-    child.kill("SIGKILL");
-    const [code, signal] = await exited;
-    assert.equal(code, null);
-    assert.equal(signal, "SIGKILL");
-    await state.admin.query("ROLLBACK");
-    locked = false;
-    const worker = await state.open();
-    const recovered = view(await worker.execute({ kind: "reload", tenantId: alpha, threadId }));
-    assert.equal(recovered.sessionId, sessionId);
-    assert.equal(recovered.status.kind, "completed");
-    assert.equal(recovered.transcript.filter((item) => item.kind === "user").length, 1);
-    const retried = view(await worker.execute({
-      kind: "start", tenantId: alpha, idempotencyKey: "pending", threadId,
-      brief: { question: "Reply with one sentence about Bitcoin. Call no tools.", horizon: "24h" },
-    }));
-    assert.deepEqual(retried, recovered);
-    assert.deepEqual(await worker.execute({ kind: "reload", tenantId: beta, sessionId }), {
-      kind: "rejected", rejection: { kind: "session-not-found" },
-    });
-    await state.close(worker);
-    const reopened = await state.open();
-    assert.deepEqual(view(await reopened.execute({ kind: "reload", tenantId: alpha, threadId })), recovered);
-  } finally {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL");
-      await exited;
-    }
-    if (locked) {
-      await state.admin.query("ROLLBACK");
-    }
-  }
-});
+  },
+);

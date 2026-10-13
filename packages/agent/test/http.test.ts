@@ -6,9 +6,10 @@ import { fileURLToPath } from "node:url";
 import { createResearchAgent } from "../src/index.js";
 import { createTenantAuthenticator } from "../src/http/auth.js";
 import { catalogView, parseCatalog } from "../src/http/catalog.js";
+import { openLogger } from "../src/http/logger.js";
 import { listenAgentHttp, createAgentHttp } from "../src/http/server.js";
 import { memoryThreads } from "../src/http/threads.js";
-import { call, say, scripted } from "./fixtures.js";
+import { call, quietLogger, recordingSandbox, say, scripted } from "./fixtures.js";
 
 const tenantTokens: Record<string, string> = Object.fromEntries(
   ["local", "alpha", "beta"].map((tenantId) => [tenantId, randomBytes(32).toString("hex")]),
@@ -84,6 +85,7 @@ test("a run streams the assistant text and a repeat of the same runId does not a
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
   });
   const server = await listenAgentHttp(app, "127.0.0.1", 0);
   try {
@@ -132,6 +134,7 @@ test("the page is served from WEB_DIST", async () => {
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
     webDistPath: pageRoot,
   });
   const server = await listenAgentHttp(app, "127.0.0.1", 0);
@@ -155,6 +158,7 @@ test("a missing horizon is rejected before the stream starts", async () => {
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
   });
   const server = await listenAgentHttp(app, "127.0.0.1", 0);
   try {
@@ -182,6 +186,7 @@ test("a run without authentication is rejected", async () => {
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
   });
   const server = await listenAgentHttp(app, "127.0.0.1", 0);
   try {
@@ -204,6 +209,60 @@ test("a run without authentication is rejected", async () => {
   }
 });
 
+test("requests and authentication failures land in the log", async () => {
+  const { models, model } = scripted([say("unused")]);
+  const out: string[] = [];
+  const errors: string[] = [];
+  const log = openLogger(
+    { LOG_CONSOLE_ENABLED: "true", LOG_FILE_ENABLED: "false", LOG_FORMAT: "json" },
+    {
+      out: { write: (text) => out.push(text) },
+      err: { write: (text) => errors.push(text) },
+      interactive: false,
+    },
+  );
+  const agent = await createResearchAgent({ models, model });
+  const app = createAgentHttp({
+    authenticate,
+    agent,
+    threads: memoryThreads(),
+    models,
+    defaultModel: model,
+    catalog: { defaultModelId: model, models: [] },
+    log,
+  });
+  const server = await listenAgentHttp(app, "127.0.0.1", 0);
+  try {
+    const denied = await fetch(`${server.url}/api/models`);
+    assert.equal(denied.status, 401);
+    const allowed = await fetch(`${server.url}/api/models`, {
+      headers: { authorization: `Bearer ${tenantTokens.local}` },
+    });
+    assert.equal(allowed.status, 200);
+  } finally {
+    await server.close();
+    await agent.close();
+    await log.close();
+  }
+  const failures = errors.map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.equal(
+    failures.some(
+      (record) =>
+        record.level === "WARNING" &&
+        record.message === "authentication failed" &&
+        record.path === "/api/models",
+    ),
+    true,
+  );
+  const requests = out.map((line) => JSON.parse(line) as Record<string, unknown>);
+  const access = requests.find(
+    (record) =>
+      record.message === "request" && record.path === "/api/models" && record.status === 200,
+  );
+  assert.equal(typeof access?.durationMs, "number");
+  assert.equal(access?.tenant, "local");
+});
+
 test("the same thread id in two tenants is two sessions", async () => {
   const { models, model } = scripted([
     call("place-order", { symbol: "BTC", side: "buy", quantity: "1" }),
@@ -217,6 +276,7 @@ test("the same thread id in two tenants is two sessions", async () => {
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
   });
   const server = await listenAgentHttp(app, "127.0.0.1", 0);
   try {
@@ -255,7 +315,9 @@ test("a parked order ends as an interrupt and a grant resume sends it once", asy
     call("place-order", { symbol: "BTC", side: "buy", quantity: "1" }),
     say("order recorded"),
   ]);
-  const agent = await createResearchAgent({ models, model });
+  // recordingSandbox 让 grant 之后订单真实派发一次，供下方"只发送一次"的断言使用。
+  const { leases, sandbox } = recordingSandbox();
+  const agent = await createResearchAgent({ models, model, sandbox });
   const app = createAgentHttp({
     authenticate,
     agent,
@@ -263,6 +325,7 @@ test("a parked order ends as an interrupt and a grant resume sends it once", asy
     models,
     defaultModel: model,
     catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
   });
   const server = await listenAgentHttp(app, "127.0.0.1", 0);
   try {
@@ -305,6 +368,7 @@ test("a parked order ends as an interrupt and a grant resume sends it once", asy
       true,
     );
     assert.deepEqual(grantedEvents.at(-1)?.outcome, { type: "success" });
+    assert.equal(leases.length, 1, "the grant sends the order exactly once");
 
     const again = await postRun(server.url, {
       threadId: "thread-1",
