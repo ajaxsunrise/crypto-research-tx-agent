@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js"
+    },
+    "./code": {
+      "types": "./dist/src/code.d.ts",
+      "import": "./dist/src/code.js"
     }
   },
   "dependencies": {
