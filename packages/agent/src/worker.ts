@@ -18,6 +18,7 @@ import pg from "pg";
 import { codeExtension } from "./extensions/code.js";
 import { openAgent, type ModelChoice, type OpenedAgent } from "./open.js";
 import { researchExtension } from "./research.js";
+import { skillsExtension } from "./skills.js";
 
 /** Another worker owns this storage. Route the request to that worker or stop it first. */
 export class StorageBusy extends Error {
@@ -33,6 +34,8 @@ export type AgentWorkerOptions = {
   schema?: string;
   /** Session workspaces become `<sandboxRoot>/session-<id>`. */
   sandboxRoot?: string;
+  /** Project skill directories containing `SKILL.md`; defaults to `./skills`. */
+  skillsRoot?: string;
   /** The model a start runs with when it does not name one. */
   model?: ModelChoice;
   /** Defaults to pi-ai's built-in providers, which read keys from the environment. */
@@ -88,12 +91,14 @@ export async function openAgentWorker(options: AgentWorkerOptions): Promise<Agen
       researchExtension({ sandbox, now }),
       codeExtension({ rootDir: options.sandboxRoot, mode: options.codeSandbox, now }),
     ];
+    const projectSkills = await skillsExtension(options.skillsRoot ?? "./skills");
 
     return await openAgent({
       storage,
       models,
       sandbox,
       extensions,
+      globalExtensions: [projectSkills],
       model: options.model,
       now: options.now,
       settings: options.settings,

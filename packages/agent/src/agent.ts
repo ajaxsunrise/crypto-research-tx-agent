@@ -69,6 +69,8 @@ export type AgentOptions = {
   sandbox: LeaseExecutor;
   /** 已安装的扩展；start 携带的 extension 选择在其中解析为会话的扩展集合。 */
   extensions: readonly Extension[];
+  /** 每次新运行都会保留的全局扩展。 */
+  globalExtensions: readonly Extension[];
   /** The model a start runs with when it does not name one. */
   model: ModelRef | undefined;
   /** Resolves the `model` choice a start carries; throws on an id the catalog does not know. */
@@ -416,9 +418,17 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
     if (configureWith !== undefined) {
       await conversation.configure({ model: configureWith }, context);
     }
-    // 新一次 start 携带的扩展选择决定会话加载哪些扩展；continuation 沿用会话当前的选择。
-    if (kind === "new-run" && extension !== undefined) {
-      await conversation.configure({ extensions: [extension] }, context);
+    // 新一次 start 携带的扩展选择决定会话加载哪些扩展；全局扩展始终保留。
+    if (kind === "new-run") {
+      await conversation.configure(
+        {
+          extensions:
+            extension === undefined
+              ? [...options.globalExtensions, ...options.extensions]
+              : [...options.globalExtensions, extension],
+        },
+        context,
+      );
     }
     if (active.get(conversation.id)?.controller.signal.aborted) {
       return false;

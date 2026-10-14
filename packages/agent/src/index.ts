@@ -11,6 +11,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { codeExtension } from "./extensions/code.js";
 import { openAgent, type ModelChoice, type OpenedAgent } from "./open.js";
 import { researchExtension } from "./research.js";
+import { skillsExtension } from "./skills.js";
 
 /**
  * A local agent for development and tests: SQLite in `directory`, or memory without one. Cloud
@@ -24,6 +25,8 @@ export async function createResearchAgent(input?: {
   sandbox?: LeaseExecutor;
   /** 代码执行 sandbox 的运行方式；缺省在主机子进程执行。 */
   codeSandbox?: CodeSandboxMode;
+  /** Project skill directories containing `SKILL.md`; defaults to `./skills`. */
+  skillsRoot?: string;
   settings?: HarnessSettings;
   resumeOnOpen?: boolean;
   now?: () => Timestamp;
@@ -32,12 +35,12 @@ export async function createResearchAgent(input?: {
   const now = input?.now;
   const clock = now ?? (() => Date.now() as Timestamp);
   const sandboxRoot = directory === undefined ? undefined : join(directory, "sandbox");
+  const projectSkills = await skillsExtension(input?.skillsRoot ?? "./skills");
   const storage =
     directory === undefined
       ? new MemoryStorage()
       : await openNodeSqliteStorage(join(directory, "session.sqlite"));
-  const sandbox =
-    input?.sandbox ?? createSandbox(sandboxRoot, now, process.env.FIRECRAWL_API_KEY);
+  const sandbox = input?.sandbox ?? createSandbox(sandboxRoot, now, process.env.FIRECRAWL_API_KEY);
   return openAgent({
     storage,
     models: input?.models ?? builtinModels(),
@@ -46,6 +49,7 @@ export async function createResearchAgent(input?: {
       researchExtension({ sandbox, now: clock }),
       codeExtension({ rootDir: sandboxRoot, mode: input?.codeSandbox, now: clock }),
     ],
+    globalExtensions: [projectSkills],
     model: input?.model,
     now,
     settings: input?.settings,
@@ -60,6 +64,7 @@ export {
   type AgentWorkerOptions,
 } from "./worker.js";
 export type { ModelChoice, OpenedAgent } from "./open.js";
+export { discoverSkills, readSkill, skillsExtension, type Skill } from "./skills.js";
 export type {
   AgentCommand,
   CallId,

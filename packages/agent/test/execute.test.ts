@@ -209,6 +209,35 @@ test("a thread with the code-execution extension runs bash through the code sand
   }
 });
 
+test("a selected extension retains the project skills", async () => {
+  const { models, model } = scripted([
+    call("list-skills", {}),
+    (context) => {
+      assert.match(lastToolResultText(context), /a-stock-data/);
+      return say("skills available");
+    },
+  ]);
+  const agent = await createResearchAgent({
+    models,
+    model,
+    skillsRoot: join(process.cwd(), "skills"),
+  });
+  try {
+    const started = view(
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "project-skills",
+        input: brief,
+        extension: "crypto-research",
+      }),
+    );
+    assert.equal(started.status.kind, "completed");
+  } finally {
+    await agent.close();
+  }
+});
+
 test("a later start can switch the session's extension", async () => {
   const { models, model } = scripted([
     say("first answer"),

@@ -8,6 +8,7 @@ export type ServerConfig = {
   readonly schema: string;
   readonly connectionString: string;
   readonly sandboxRoot: string;
+  readonly skillsRoot: string;
   /** 代码执行 sandbox 的运行方式：主机执行或 docker 容器隔离。 */
   readonly codeSandbox: CodeSandboxMode;
   readonly defaultModel: string;
@@ -99,6 +100,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     httpPort: requiredPort(env, "HTTP_PORT"),
     schema: schema === undefined || schema === "" ? "crypto_agent" : schema,
     sandboxRoot: required(env, "SANDBOX_ROOT"),
+    skillsRoot: env.SKILLS_ROOT?.trim() || "./skills",
     codeSandbox: parseCodeSandboxMode(env),
     defaultModel: required(env, "DEFAULT_MODEL"),
     catalogPath: required(env, "CATALOG_PATH"),

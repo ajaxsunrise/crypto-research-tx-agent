@@ -55,6 +55,8 @@ export async function openAgent(input: {
   sandbox: LeaseExecutor;
   /** 扩展列表，每个扩展提供工具、system prompt 和 hook。调用方决定加载哪些扩展。 */
   extensions: readonly Extension[];
+  /** 每次新运行都会保留的全局扩展。 */
+  globalExtensions?: readonly Extension[];
   /** The model a start runs with when it does not name one. */
   model?: ModelChoice;
   now?: () => Timestamp;
@@ -69,8 +71,9 @@ export async function openAgent(input: {
 }): Promise<OpenedAgent> {
   const model = resolveModel(input.models, input.model);
   const now = input.now ?? (() => brand(Date.now(), "Timestamp"));
+  const globalExtensions = input.globalExtensions ?? [];
   const registry = createRegistry();
-  for (const ext of input.extensions) {
+  for (const ext of [...globalExtensions, ...input.extensions]) {
     registry.install(ext);
   }
 
@@ -84,6 +87,7 @@ export async function openAgent(input: {
     storage: input.storage,
     sandbox: input.sandbox,
     extensions: input.extensions,
+    globalExtensions,
     model,
     resolveChoice: (choice: string) => resolveModel(input.models, choice) as ModelRef,
     now,

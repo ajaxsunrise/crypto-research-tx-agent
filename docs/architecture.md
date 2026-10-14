@@ -15,6 +15,7 @@
 | `packages/agent`            | `agent.ts`                  | 命令层：`start` / `reload` / `persist` / `resume` / `approve` / `cancel` 的全部状态转移，run 与 order 的持久状态，transcript 推导                                                                                                                                     |
 |                             | `research.ts`               | crypto-research 扩展（`web-search` / `read-webpage` / `read-market` / `write-note` / `place-order`）与全部 durable doc 定义                                                                                                                          |
 |                             | `extensions/code.ts`        | code-execution 扩展（`run-bash` / `run-python`），构造 `compute` lease 交给 `createCodeSandbox`                                                                                                                                                                       |
+|                             | `skills.ts`                 | 扫描项目技能目录并提供 `list-skills` / `read-skill` 工具                                                                                                                                                                                                              |
 |                             | `worker.ts`、`open.ts`      | `openAgentWorker`（连接、锁、schema、扩展安装）与 `openAgent`（Harness、registry、模型解析、启动恢复）                                                                                                                                                                |
 |                             | `http/*`                    | Hono 服务：认证（`auth.ts`，静态 token + JWT）、注册与用户目录（`users.ts`，scrypt 密码散列）、AG-UI 输入解析（`parse-run.ts`）、SSE 事件流（`server.ts`、`events.ts`）、线程目录（`threads.ts`）、模型目录（`catalog.ts`）、配置（`config.ts`）、日志（`logger.ts`） |
 | `packages/web`              | `App.tsx`                   | React 页面：AG-UI 客户端，发送运行、轮询状态、展示审批按钮                                                                                                                                                                                                            |
@@ -61,7 +62,7 @@ flowchart TD
     end
     subgraph core["命令层 packages/agent"]
         AGENT["agent.ts<br/>六个命令与状态转移"]
-        REG["扩展 registry<br/>researchExtension + codeExtension"]
+        REG["扩展 registry<br/>researchExtension + codeExtension + project-skills"]
     end
     subgraph dur["pi-durable"]
         H["Harness / Conversation"]
@@ -257,12 +258,17 @@ HTTP 请求路径上同样有恢复入口：`prepare` 看到会话状态为 `nee
 Markdown 页面内容，`read-webpage` 调用 Firecrawl Scrape。两种调用都建立 `read` lease，能够在
 恢复时重新执行；SDK 抛出的请求错误会结束当前工具调用。
 
+`SKILLS_ROOT` 默认为 `./skills`。服务启动时扫描其直接子目录，包含 `SKILL.md` 的目录通过
+`list-skills` 和 `read-skill` 提供给每个会话；指定 `crypto-research` 或 `code-execution` 时项目
+技能扩展仍然保留。
+
 | 变量                                                               | 作用                                                          |
 | ------------------------------------------------------------------ | ------------------------------------------------------------- |
 | `HTTP_HOST` / `HTTP_PORT`                                          | 服务监听地址                                                  |
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`      | Postgres 连接                                                 |
 | `SCHEMA`                                                           | 全部租户共用的 schema，默认 `crypto_agent`                    |
 | `SANDBOX_ROOT`                                                     | 会话工作目录与笔记的根目录                                    |
+| `SKILLS_ROOT`                                                      | 项目技能目录，默认 `./skills`                                 |
 | `CODE_SANDBOX_MODE`                                                | 代码执行方式：`host`（默认）或 `docker`                       |
 | `CODE_SANDBOX_IMAGE` / `CODE_SANDBOX_MEMORY` / `CODE_SANDBOX_CPUS` | docker 模式的镜像与配额；镜像需预先 pull                      |
 | `DEFAULT_MODEL` / `CATALOG_PATH`                                   | 默认模型 id 与 `model_providers.json` 路径                    |
