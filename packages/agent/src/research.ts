@@ -1,4 +1,10 @@
-import { orderIntent, readIntent, writeIntent } from "@crypto/domain/internal";
+import {
+  orderIntent,
+  readIntent,
+  webScrapeIntent,
+  webSearchIntent,
+  writeIntent,
+} from "@crypto/domain/internal";
 import {
   brand,
   executeLease,
@@ -58,7 +64,7 @@ export const ThreadDoc = defineDocFamily({
   version: 1,
   scope: "session",
   family: true,
-  initial: (seed: { conversationId: number }) => ({ ...seed }),
+  initial: (seed: { conversationId: number; preview?: string }) => ({ ...seed }),
 });
 
 /** The model a run was started with, stored so a continuation after a restart uses the same one. */
@@ -175,6 +181,7 @@ async function runReplayable(
 
 const systemPrompt = [
   "You research crypto markets.",
+  "Use web-search to find relevant sources and read-webpage to read a page when needed.",
   "Use read-market to read a symbol and write-note to store a note.",
   "Call place-order alone, with no other tool calls in the same response. It waits for a person to approve it, and the run ends until they do.",
   "Do not claim an order was sent before you are told its result.",
@@ -209,6 +216,24 @@ export function researchExtension(input: { sandbox: LeaseExecutor; now: () => Ti
     executionMode: "sequential",
     execute: (args, api, context) =>
       runReplayable(input.sandbox, input.now, api, writeIntent(args.path, args.content), context),
+  });
+
+  const webSearch = defineTool({
+    name: "web-search",
+    description: "Search the web and return relevant pages with their markdown content.",
+    parameters: Type.Object({ query: Type.String({ minLength: 1 }) }),
+    replay: "safe",
+    execute: (args, api, context) =>
+      runReplayable(input.sandbox, input.now, api, webSearchIntent(args.query), context),
+  });
+
+  const readWebpage = defineTool({
+    name: "read-webpage",
+    description: "Read a webpage as markdown from its URL.",
+    parameters: Type.Object({ url: Type.String({ minLength: 1 }) }),
+    replay: "safe",
+    execute: (args, api, context) =>
+      runReplayable(input.sandbox, input.now, api, webScrapeIntent(args.url), context),
   });
 
   const placeOrder = defineTool({
@@ -259,7 +284,7 @@ export function researchExtension(input: { sandbox: LeaseExecutor; now: () => Ti
   return defineExtension({
     name: "crypto-research",
     sections: [section("preamble", () => systemPrompt, { tag: false })],
-    tools: [readMarket, writeNote, placeOrder],
+    tools: [readMarket, writeNote, webSearch, readWebpage, placeOrder],
     hooks: [
       hook(ToolTask, {
         async beforeTool(call, api, context) {

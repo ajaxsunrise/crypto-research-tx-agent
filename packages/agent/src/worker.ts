@@ -38,6 +38,8 @@ export type AgentWorkerOptions = {
   /** Defaults to pi-ai's built-in providers, which read keys from the environment. */
   models?: Models | (() => Models);
   sandbox?: LeaseExecutor;
+  /** Firecrawl API key for web search and page reading. */
+  firecrawlApiKey?: string;
   /** 代码执行 sandbox 的运行方式；缺省在主机子进程执行。生产用 docker 隔离。 */
   codeSandbox?: CodeSandboxMode;
   settings?: HarnessSettings;
@@ -79,7 +81,8 @@ export async function openAgentWorker(options: AgentWorkerOptions): Promise<Agen
 
     const models =
       typeof options.models === "function" ? options.models() : (options.models ?? builtinModels());
-    const sandbox = options.sandbox ?? createSandbox(options.sandboxRoot, options.now);
+    const sandbox =
+      options.sandbox ?? createSandbox(options.sandboxRoot, options.now, options.firecrawlApiKey);
     const now = options.now ?? (() => Date.now() as Timestamp);
     const extensions: Extension[] = [
       researchExtension({ sandbox, now }),

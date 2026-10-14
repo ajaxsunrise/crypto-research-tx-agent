@@ -1,8 +1,11 @@
+import { Theme } from "@astryxdesign/core/theme";
+import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
 
 import { App } from "./App.js";
-import "./styles.css";
+import "./globals.css";
 
 const root = document.getElementById("root");
 if (root === null) {
@@ -10,6 +13,10 @@ if (root === null) {
 }
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <Theme theme={neutralTheme} mode="light">
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </Theme>
   </StrictMode>,
 );

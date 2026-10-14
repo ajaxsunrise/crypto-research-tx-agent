@@ -10,10 +10,10 @@
 | 模块                        | 关键文件                    | 职责                                                                                                                                                                                                                                                                  |
 | --------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/domain`           | `lease.ts`、`internal.ts`   | 策略层，无 I/O。EffectClass（`read` / `idempotent-write` / `external` / `compute`）、Lease 类型族与构造函数、`AgentCommand`、`SessionView`、`executeLease` 的期限与取消语义                                                                                           |
-| `packages/sandbox`          | `index.ts`、`code.ts`       | LeaseExecutor 的实现。`index.ts` 是会话 workspace 的内容寻址存储（`write-note`）；`code.ts` 是代码执行 gateway（主机子进程 / docker 容器）                                                                                                                            |
+| `packages/sandbox`          | `index.ts`、`code.ts`       | LeaseExecutor 的实现。`index.ts` 提供 Firecrawl 网页搜索与 Markdown 页面读取，以及会话 workspace 的内容寻址存储（`write-note`）；`code.ts` 是代码执行 gateway（主机子进程 / docker 容器） |
 | `packages/storage-postgres` | `database.ts`、`dialect.ts` | 把 pi-durable 的 `SqliteDatabase` facade 翻译到 Postgres（占位符、类型、`ON CONFLICT`），负责 schema 迁移与单写者 advisory lock                                                                                                                                       |
 | `packages/agent`            | `agent.ts`                  | 命令层：`start` / `reload` / `persist` / `resume` / `approve` / `cancel` 的全部状态转移，run 与 order 的持久状态，transcript 推导                                                                                                                                     |
-|                             | `research.ts`               | crypto-research 扩展（`read-market` / `write-note` / `place-order`）与全部 durable doc 定义                                                                                                                                                                           |
+|                             | `research.ts`               | crypto-research 扩展（`web-search` / `read-webpage` / `read-market` / `write-note` / `place-order`）与全部 durable doc 定义                                                                                                                          |
 |                             | `extensions/code.ts`        | code-execution 扩展（`run-bash` / `run-python`），构造 `compute` lease 交给 `createCodeSandbox`                                                                                                                                                                       |
 |                             | `worker.ts`、`open.ts`      | `openAgentWorker`（连接、锁、schema、扩展安装）与 `openAgent`（Harness、registry、模型解析、启动恢复）                                                                                                                                                                |
 |                             | `http/*`                    | Hono 服务：认证（`auth.ts`，静态 token + JWT）、注册与用户目录（`users.ts`，scrypt 密码散列）、AG-UI 输入解析（`parse-run.ts`）、SSE 事件流（`server.ts`、`events.ts`）、线程目录（`threads.ts`）、模型目录（`catalog.ts`）、配置（`config.ts`）、日志（`logger.ts`） |
@@ -224,8 +224,12 @@ HTTP 请求路径上同样有恢复入口：`prepare` 看到会话状态为 `nee
 
 - 发送：`run()` 向 `POST /agent` 提交 `RunAgentInput`，`forwardedProps` 携带模型 id、扩展
   选择、可选 Horizon；页面通过 SSE 事件流实时渲染消息与工具调用。
-- 空闲刷新：每 1500 毫秒 `GET /api/threads/:threadId` 拉取 `SessionView`，更新
-  `awaiting-approval`、`needs-resume` 等状态。
+- 会话列表：`GET /api/threads` 返回本租户的全部线程（threadId、首问预览、运行状态），
+  数据源是扫描 durable 的 `ThreadDoc`（key 前缀 `t:<tenant>:`）。点击列表项切换当前线程，
+  由 `GET /api/threads/:threadId` 加载完整历史；"新建会话"生成新的 threadId，首次提问后
+  进入列表。
+- 会话读取：进入会话及 SSE 结束后读取 `SessionView`；后台仍在运行时每 1500 毫秒读取，
+  完成、取消、等待审批或等待恢复后停止轮询。
 - 审批：Grant / Deny 按钮发送带 `payload.decision` 的 resume 请求。
 - 恢复与取消：`POST /api/threads/:threadId/resume` 与 `/cancel`。
 - 本地保存：线程 id 存 `crypto-thread:<tenant>`，扩展选择存 `crypto-extension:<tenant>`，
@@ -238,7 +242,7 @@ HTTP 请求路径上同样有恢复入口：`prepare` 看到会话状态为 `nee
 | pi-durable 核心行            | 共享 schema                                | 会话、entry 日志（transcript、submission、task checkpoint）、doc 存储 |
 | `SessionOwnerDoc`            | doc，key 为 conversationId                 | 会话归属的租户，与创建会话的 commit 同笔写入                          |
 | `StartDoc`                   | doc，key 为 `t:<tenant>:<idempotencyKey>`  | 幂等 start 的认领：输入、模型、扩展选择、submissionId                 |
-| `ThreadDoc`                  | doc，key 为 `t:<tenant>:<threadId>`        | 线程到会话的映射                                                      |
+| `ThreadDoc`                  | doc，key 为 `t:<tenant>:<threadId>`        | 线程到会话的映射，附带首问预览（前 120 个字符）                       |
 | `RunDoc`                     | doc，key 为 `crypto.run:<sessionId>`       | 运行状态：outcome、submissionId、pendingStart、模型                   |
 | `OrderDoc` / `OpenOrdersDoc` | doc                                        | 订单的 phase 状态机与活跃订单索引                                     |
 | `crypto_threads`             | Postgres 表，`(tenant_id, thread_id)` 主键 | 线程目录的补充查询路径                                                |
@@ -249,6 +253,10 @@ HTTP 请求路径上同样有恢复入口：`prepare` 看到会话状态为 `nee
 
 ## 环境变量
 
+`FIRECRAWL_API_KEY` 由 HTTP 服务读取并传给 sandbox。`web-search` 调用 Firecrawl Search 并附带
+Markdown 页面内容，`read-webpage` 调用 Firecrawl Scrape。两种调用都建立 `read` lease，能够在
+恢复时重新执行；SDK 抛出的请求错误会结束当前工具调用。
+
 | 变量                                                               | 作用                                                          |
 | ------------------------------------------------------------------ | ------------------------------------------------------------- |
 | `HTTP_HOST` / `HTTP_PORT`                                          | 服务监听地址                                                  |
@@ -258,6 +266,7 @@ HTTP 请求路径上同样有恢复入口：`prepare` 看到会话状态为 `nee
 | `CODE_SANDBOX_MODE`                                                | 代码执行方式：`host`（默认）或 `docker`                       |
 | `CODE_SANDBOX_IMAGE` / `CODE_SANDBOX_MEMORY` / `CODE_SANDBOX_CPUS` | docker 模式的镜像与配额；镜像需预先 pull                      |
 | `DEFAULT_MODEL` / `CATALOG_PATH`                                   | 默认模型 id 与 `model_providers.json` 路径                    |
+| `FIRECRAWL_API_KEY`                                                | Firecrawl 网页搜索和 Markdown 页面读取的 API key              |
 | `TENANT_TOKENS`                                                    | JSON，租户 id 到 Bearer token 的映射                          |
 | `AUTH_JWT_SECRET` / `AUTH_JWT_TTL_SECONDS`                         | 登录 JWT 的签名密钥（至少 32 字符）与有效期（秒，默认 86400） |
 | `WEB_DIST`                                                         | 编译后页面的目录，存在则由服务直接提供                        |

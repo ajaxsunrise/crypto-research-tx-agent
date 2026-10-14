@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import { EventEncoder } from "@ag-ui/encoder";
@@ -301,6 +303,16 @@ export function createAgentHttp(
     return c.json({ token, tenantId });
   });
   app.get("/api/models", (c) => c.json(options.catalog));
+  app.get("/api/threads", async (c) => {
+    const result = await options.agent.listThreads(c.get("tenantId"));
+    if (result.kind !== "ok") {
+      return c.json(
+        { message: rejectionMessage(result.rejection) },
+        rejectionStatus(result.rejection),
+      );
+    }
+    return c.json({ threads: result.threads });
+  });
   app.get("/api/threads/:threadId", async (c) => {
     const result = await loadThread(options, c.get("tenantId"), c.req.param("threadId"));
     if (result.kind !== "ok") {
@@ -477,6 +489,14 @@ export function createAgentHttp(
       throw new Error(`WEB_DIST ${options.webDistPath} does not exist.`);
     }
     app.use("/*", serveStatic({ root: options.webDistPath }));
+    // SPA 前端路由（如 /login）的回退：非 API 路径一律返回 index.html。
+    app.get("*", async (c) => {
+      if (c.req.path === "/agent" || c.req.path.startsWith("/api/")) {
+        return c.json({ message: "Not found." }, 404);
+      }
+      const index = await readFile(join(options.webDistPath!, "index.html"), "utf8");
+      return c.html(index);
+    });
   }
   return app;
 }

@@ -8,6 +8,8 @@ import {
   type ExecuteResult,
   type ExternalResult,
   type LeaseExecutor,
+  type ListedThread,
+  type ListThreadsResult,
   type OperationId,
   type ResearchAgent,
   type RunStatus,
@@ -27,6 +29,7 @@ import type {
   Extension,
   Harness,
   ModelRef,
+  Storage,
   SubmissionId,
   Tx,
 } from "@earendil-works/pi-durable";
@@ -60,6 +63,8 @@ const orderResultKind = "agent.order-result";
 
 export type AgentOptions = {
   harness: Harness;
+  /** 底层存储；会话列表经它扫描 ThreadDoc。 */
+  storage: Storage;
   /** The sandbox. External leases go through it only after a grant. */
   sandbox: LeaseExecutor;
   /** 已安装的扩展；start 携带的 extension 选择在其中解析为会话的扩展集合。 */
@@ -204,7 +209,7 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
   recover(): Promise<void>;
   close(): Promise<void>;
 } {
-  const { harness, sandbox, now, resolveChoice } = options;
+  const { harness, storage, sandbox, now, resolveChoice } = options;
   // One worker owns the storage (the storage lock enforces it), so an in-process set is enough to
   // keep two commands from driving one session at once. Conversation ids are unique across tenants,
   // so one set serves every tenant.
@@ -553,6 +558,7 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
         }
         if (thread !== undefined) {
           thread.conversationId = started.conversationId;
+          thread.preview = input.slice(0, 120);
         }
         if (started.input !== undefined) {
           return { kind: "existing" as const, conversationId: started.conversationId };
@@ -608,6 +614,7 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
       started.extension = command.extension ?? null;
       if (thread !== undefined) {
         thread.conversationId = conversationId;
+        thread.preview = input.slice(0, 120);
       }
       const run = await tx.doc(RunDoc, sessionKey(conversationId), {
         runId: scopedKey,
@@ -884,7 +891,60 @@ export function createAgent(options: AgentOptions): ResearchAgent & {
     return read({ tenantId: command.tenantId, sessionId: sessionIdOf(thread.conversationId) });
   }
 
+  /**
+   * 会话列表的数据源是 durable 的 ThreadDoc（key 形如 `t:<tenant>:<threadId>`）：按租户前缀
+   * 过滤扫描结果，每条再读归属与运行状态。扫描按 id 升序，返回前倒序，最新创建的排在前面。
+   */
+  async function listThreads(tenantId: TenantId): Promise<ListThreadsResult> {
+    if (closing) {
+      throw new Error("This agent is closed.");
+    }
+    if (typeof tenantId !== "string" || parseTenantId(tenantId) === undefined) {
+      return {
+        kind: "rejected",
+        rejection: { kind: "invalid-request", message: "Invalid tenantId." },
+      };
+    }
+    const prefix = `t:${tenantId}:`;
+    const threads: ListedThread[] = [];
+    let cursor: Cursor | undefined;
+    do {
+      const page = await storage.scanDocuments(
+        { scope: { kind: "session" }, at: "current", kind: ThreadDoc.definition.kind },
+        100,
+        cursor,
+        context,
+      );
+      for (const record of page.items) {
+        if (record.key === undefined || !record.key.startsWith(prefix)) {
+          continue;
+        }
+        const thread = await harness.snapshot(ThreadDoc, record.key, context);
+        if (thread === undefined || !Number.isSafeInteger(thread.conversationId)) {
+          continue;
+        }
+        const owner = await harness.snapshot(
+          SessionOwnerDoc,
+          String(thread.conversationId),
+          context,
+        );
+        if (owner?.tenantId !== tenantId) {
+          continue;
+        }
+        threads.push({
+          threadId: record.key.slice(prefix.length),
+          preview: thread.preview ?? "",
+          status: (await statusOf(thread.conversationId, await runOf(thread.conversationId))).kind,
+        });
+      }
+      cursor = page.next;
+    } while (cursor !== undefined);
+    threads.reverse();
+    return { kind: "ok", threads };
+  }
+
   return {
+    listThreads,
     async recover() {
       let cursor: Cursor | undefined;
       do {

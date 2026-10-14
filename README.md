@@ -15,8 +15,9 @@ Built, with a test for each claim:
   SQLite or memory for local development.
 - A command API — `start`, `reload`, `persist`, `resume`, `approve`, `cancel` — each naming its
   tenant, with idempotent starts that hold across crashes.
-- Three research tools. `place-order` parks the order and ends the run; approval permits at most
-  one dispatch attempt for that operation id.
+- Five research tools. `web-search` searches the web, `read-webpage` reads a page as Markdown,
+  `read-market` reads configured market data, `write-note` stores a note, and `place-order` parks
+  an order until approval permits at most one dispatch attempt for that operation id.
 - Crash recovery verified by killing real processes mid-tool: safe tools rerun, orders are reported
   `interrupted` and never resent, and a second worker takes the storage over.
 - Row-level tenant isolation: one idempotency key per tenant, one thread directory per tenant, and
@@ -87,9 +88,9 @@ those tests skip.
 
 ## Open the page
 
-The page and the agent speak [AG-UI](https://github.com/ag-ui-protocol/ag-ui). The browser posts `RunAgentInput` to `POST /agent` and reads the SSE event stream. The page opens with a login screen: register or log in with an email and password (`POST /api/auth/register` / `POST /api/auth/login`), and the server answers with a JWT whose subject is the account's tenant id; a "访问令牌" (access token) mode enters a static tenant token from `TENANT_TOKENS` directly. Every request carries the token as a Bearer credential; an optional `x-tenant-id` header must match that tenant. The session (token and tenant id) persists in `localStorage`, and any authenticated request answered with 401 signs the page out back to the login screen. The model id, an optional Horizon, and the extension choice (`crypto-research` or `code-execution`) travel in `forwardedProps`; the choice decides which extension's tools and system prompt the thread loads. A parked `place-order` ends the run as an interrupt; Grant sends `resume` with `payload.decision` `grant`, and Deny sends `deny`.
+The page and the agent speak [AG-UI](https://github.com/ag-ui-protocol/ag-ui). The browser posts `RunAgentInput` to `POST /agent` and reads the SSE event stream. The frontend has two routes: `/login` is a standalone sign-in page (register or log in with an email and password via `POST /api/auth/register` / `POST /api/auth/login`; a "访问令牌" mode enters a static tenant token from `TENANT_TOKENS` directly), and the server answers with a JWT whose subject is the account's tenant id. `/` is the workspace: a resizable left sidebar lists the tenant's threads from `GET /api/threads` (first-question preview and run status); clicking one loads its history through `GET /api/threads/:threadId`, and "新建会话" starts a fresh thread id. Every request carries the token as a Bearer credential; an optional `x-tenant-id` header must match that tenant. The session (token and tenant id) persists in `localStorage`, and any authenticated request answered with 401 signs the page out back to the login screen. Non-API GET paths fall back to `index.html`, so both routes survive a refresh when the built page is served from `WEB_DIST`. The model id, an optional Horizon, and the extension choice (`crypto-research` or `code-execution`) travel in `forwardedProps`; the choice decides which extension's tools and system prompt the thread loads. A parked `place-order` ends the run as an interrupt; Grant sends `resume` with `payload.decision` `grant`, and Deny sends `deny`.
 
-Fill `.env` from `.env.example` (`HTTP_HOST`, `HTTP_PORT`, `SCHEMA`, `SANDBOX_ROOT`, `TENANT_TOKENS`, `AUTH_JWT_SECRET`, `DEFAULT_MODEL`, `CATALOG_PATH`, `WEB_DIST`). Set `TENANT_TOKENS` to a JSON object mapping each tenant id to a unique token of at least 32 characters, and `AUTH_JWT_SECRET` to a random string of at least 32 characters for signing login JWTs (`AUTH_JWT_TTL_SECONDS` sets their lifetime, default 86400). Put provider keys in `model_providers.json` (see `model_providers.example.json`). `DEFAULT_MODEL` is `provider/modelId` and must exist in that file.
+Fill `.env` from `.env.example` (`HTTP_HOST`, `HTTP_PORT`, `SCHEMA`, `SANDBOX_ROOT`, `TENANT_TOKENS`, `AUTH_JWT_SECRET`, `DEFAULT_MODEL`, `CATALOG_PATH`, `FIRECRAWL_API_KEY`, `WEB_DIST`). Set `TENANT_TOKENS` to a JSON object mapping each tenant id to a unique token of at least 32 characters, and `AUTH_JWT_SECRET` to a random string of at least 32 characters for signing login JWTs (`AUTH_JWT_TTL_SECONDS` sets their lifetime, default 86400). Put provider keys in `model_providers.json` (see `model_providers.example.json`). `DEFAULT_MODEL` is `provider/modelId` and must exist in that file. `FIRECRAWL_API_KEY` enables `web-search` and `read-webpage`; Firecrawl SDK errors are returned through the lease execution path.
 
 The server logs every request, authentication failure, agent command, and run outcome. The `LOG_*` entries in `.env.example` control it: `LOG_LEVEL` (`DEBUG`/`INFO`/`WARNING`/`ERROR`, default `INFO`), `LOG_FORMAT` (`text`, `json`, or `auto` — text on a terminal, JSON otherwise; the file always gets JSON lines), `LOG_CONSOLE_ENABLED`/`LOG_FILE_ENABLED`, `LOG_DIR` (the file is `agent.log`), `LOG_QUEUE_SIZE` (a full queue drops records and reports the count with the next write), and rotation by `LOG_FILE_MAX_BYTES` keeping `LOG_FILE_BACKUP_COUNT` numbered backups. An unusable `LOG_DIR` disables the file side with one console notice and the server keeps running; `DEBUG` and `INFO` go to stdout, `WARNING` and `ERROR` to stderr.
 
@@ -210,6 +211,8 @@ decides.
 | Tool          | Parameters                   | Effect class                | `replay`   | After a crash                                                       |
 | ------------- | ---------------------------- | --------------------------- | ---------- | ------------------------------------------------------------------- |
 | `read-market` | `symbol`                     | `read`                      | `"safe"`   | runs again                                                          |
+| `web-search`  | `query`                      | `read`                      | `"safe"`   | runs again                                                          |
+| `read-webpage` | `url`                        | `read`                      | `"safe"`   | runs again                                                          |
 | `write-note`  | `path`, `content`            | `idempotent-write` (sha256) | `"safe"`   | runs again; same hash returns stored text                           |
 | `place-order` | `symbol`, `side`, `quantity` | `external`                  | `"unsafe"` | parks; one dispatch attempt after approval; uncertain after a crash |
 | `run-bash`    | `command`                    | `compute`                   | `"safe"`   | runs again; same code returns the same output                       |
@@ -333,5 +336,7 @@ docs/                 the research notes this build follows
   need application-level handling).
 - `docs/architecture.md` — the module map, call relationships, and data flows: the run, approval,
   code-execution, and recovery paths, plus every durable record the system writes.
+- `docs/request_lifecycle.md` — one question end to end: the six stages from the page's submit
+  button through the SSE stream back to the rendered answer, each anchored to code lines.
 - `docs/技术栈推荐：围绕 AI 反馈闭环做选型.md` — the toolchain choice: pnpm, TypeScript 7,
   oxlint/oxfmt, `node --test`.

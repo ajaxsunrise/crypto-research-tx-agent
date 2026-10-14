@@ -122,8 +122,22 @@ export type ExecuteResult =
   | { kind: "ok"; view: SessionView }
   | { kind: "rejected"; rejection: Rejection };
 
+/** 一个线程在会话列表里的摘要：足够展示与挑选，点击后再加载完整历史。 */
+export type ListedThread = {
+  threadId: string;
+  /** 首次 start 的问题文本前 120 个字符；空字符串表示没有记录。 */
+  preview: string;
+  status: RunStatus["kind"];
+};
+
+export type ListThreadsResult =
+  | { kind: "ok"; threads: readonly ListedThread[] }
+  | { kind: "rejected"; rejection: Rejection };
+
 export type ResearchAgent = {
   readonly execute: (command: AgentCommand) => Promise<ExecuteResult>;
+  /** 列出某租户的全部线程，最新创建的排在前面。 */
+  readonly listThreads: (tenantId: TenantId) => Promise<ListThreadsResult>;
 };
 
 export type ReplayableIntent =
@@ -131,6 +145,16 @@ export type ReplayableIntent =
       kind: "read";
       name: string;
       symbol: string;
+    }
+  | {
+      kind: "web-search";
+      name: "web-search";
+      query: string;
+    }
+  | {
+      kind: "web-scrape";
+      name: "web-scrape";
+      url: string;
     }
   | {
       kind: "idempotent-write";
@@ -273,7 +297,9 @@ export function leaseReplayable(input: {
   now: Timestamp;
 }): ReplayableLease {
   const effect: ReplayableEffect =
-    input.intent.kind === "read"
+    input.intent.kind === "read" ||
+    input.intent.kind === "web-search" ||
+    input.intent.kind === "web-scrape"
       ? { kind: "read" }
       : { kind: "idempotent-write", contentHash: input.intent.contentHash };
   return {

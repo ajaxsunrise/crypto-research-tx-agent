@@ -552,3 +552,119 @@ test("registration mints a tenant and login issues a JWT that authenticates requ
     await agent.close();
   }
 });
+
+test("GET /api/threads lists each tenant's threads with preview and status", async () => {
+  const { models, model } = scripted([say("funding answer"), say("volatility answer")]);
+  const agent = await createResearchAgent({ models, model });
+  const app = createAgentHttp({
+    authenticate,
+    agent,
+    threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
+    models,
+    defaultModel: model,
+    catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
+  });
+  const server = await listenAgentHttp(app, "127.0.0.1", 0);
+  const run = (threadId: string, question: string, tenantId = "local") =>
+    postRun(
+      server.url,
+      {
+        threadId,
+        runId: crypto.randomUUID(),
+        messages: [{ id: crypto.randomUUID(), role: "user", content: question }],
+        forwardedProps: {},
+      },
+      tenantId,
+    );
+  const list = (tenantId: string) =>
+    fetch(`${server.url}/api/threads`, {
+      headers: {
+        authorization: `Bearer ${tenantTokens[tenantId]}`,
+        "x-tenant-id": tenantId,
+      },
+    });
+  try {
+    const first = await run("thread-a", "What changed in BTC funding?");
+    assert.equal(first.status, 200);
+    await first.text();
+    const second = await run("thread-b", "How volatile was ETH?", "alpha");
+    assert.equal(second.status, 200);
+    await second.text();
+
+    const local = await list("local");
+    assert.equal(local.status, 200);
+    const localBody = (await local.json()) as {
+      threads: { threadId: string; preview: string; status: string }[];
+    };
+    assert.equal(localBody.threads.length, 1);
+    assert.equal(localBody.threads[0]?.threadId, "thread-a");
+    assert.equal(localBody.threads[0]?.preview, "What changed in BTC funding?");
+    assert.equal(localBody.threads[0]?.status, "completed");
+
+    const alpha = await list("alpha");
+    const alphaBody = (await alpha.json()) as {
+      threads: { threadId: string; preview: string; status: string }[];
+    };
+    assert.equal(alphaBody.threads.length, 1);
+    assert.equal(alphaBody.threads[0]?.threadId, "thread-b");
+    assert.equal(alphaBody.threads[0]?.preview, "How volatile was ETH?");
+
+    // 列表需要认证
+    const denied = await fetch(`${server.url}/api/threads`);
+    assert.equal(denied.status, 401);
+
+    // 点击列表里的线程，读到的是同一会话的历史消息
+    const loaded = await fetch(`${server.url}/api/threads/thread-a`, {
+      headers: {
+        authorization: `Bearer ${tenantTokens.local}`,
+        "x-tenant-id": "local",
+      },
+    });
+    assert.equal(loaded.status, 200);
+    const view = (await loaded.json()) as {
+      transcript: { kind: string; text?: string }[];
+    };
+    assert.equal(
+      view.transcript.some((item) => item.kind === "assistant" && item.text === "funding answer"),
+      true,
+    );
+  } finally {
+    await server.close();
+    await agent.close();
+  }
+});
+
+test("SPA routes fall back to index.html while unknown API paths stay 404", async () => {
+  const { models, model } = scripted([say("unused")]);
+  const agent = await createResearchAgent({ models, model });
+  const pageRoot = fileURLToPath(new URL("../../test/page", import.meta.url));
+  const app = createAgentHttp({
+    authenticate,
+    agent,
+    threads: memoryThreads(),
+    users: memoryUsers(),
+    jwt,
+    models,
+    defaultModel: model,
+    catalog: { defaultModelId: model, models: [] },
+    log: quietLogger(),
+    webDistPath: pageRoot,
+  });
+  const server = await listenAgentHttp(app, "127.0.0.1", 0);
+  try {
+    const spa = await fetch(`${server.url}/login`);
+    assert.equal(spa.status, 200);
+    assert.match(await spa.text(), /research-page-fixture/);
+    const unknownApi = await fetch(`${server.url}/api/unknown`, {
+      headers: { authorization: `Bearer ${tenantTokens.local}` },
+    });
+    assert.equal(unknownApi.status, 404);
+    assert.deepEqual(await unknownApi.json(), { message: "Not found." });
+  } finally {
+    await server.close();
+    await agent.close();
+  }
+});

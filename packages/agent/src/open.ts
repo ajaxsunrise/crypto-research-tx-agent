@@ -81,6 +81,7 @@ export async function openAgent(input: {
   );
   const agent = createAgent({
     harness,
+    storage: input.storage,
     sandbox: input.sandbox,
     extensions: input.extensions,
     model,
@@ -92,6 +93,7 @@ export async function openAgent(input: {
 
   return {
     execute: agent.execute,
+    listThreads: agent.listThreads,
     recovery,
     close() {
       if (closed === undefined) {

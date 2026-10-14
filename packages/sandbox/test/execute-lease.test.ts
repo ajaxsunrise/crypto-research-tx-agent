@@ -3,7 +3,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-import { hashContent, issueGrant, orderIntent, readIntent } from "@crypto/domain/internal";
+import {
+  hashContent,
+  issueGrant,
+  orderIntent,
+  readIntent,
+  webSearchIntent,
+} from "@crypto/domain/internal";
 import { brand, leaseExternal, leaseReplayable, type ReplayableLease } from "@crypto/domain/lease";
 
 import { createSandbox } from "../src/index.js";
@@ -172,4 +178,16 @@ test("默认 sandbox 返回未配置行情与订单执行能力", async () => {
     kind: "failed",
     message: "Order execution is not configured.",
   });
+});
+
+test("网页搜索未配置 Firecrawl key 时返回配置错误", async () => {
+  const lease = leaseReplayable({
+    workspace: brand("desk", "WorkspaceRef"),
+    intent: webSearchIntent("BTC funding"),
+    now: brand(Date.now(), "Timestamp"),
+  });
+  assert.deepEqual(
+    await createSandbox(undefined, undefined, "")(lease, new AbortController().signal),
+    { kind: "failed", message: "FIRECRAWL_API_KEY is not configured." },
+  );
 });

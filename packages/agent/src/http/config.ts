@@ -13,6 +13,7 @@ export type ServerConfig = {
   readonly defaultModel: string;
   readonly catalogPath: string;
   readonly tenantTokens: string;
+  readonly firecrawlApiKey: string | undefined;
   /** 注册登录模块的 JWT 签名密钥与有效期。 */
   readonly jwtSecret: string;
   readonly jwtTtlSeconds: number;
@@ -102,6 +103,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv): ServerConfig {
     defaultModel: required(env, "DEFAULT_MODEL"),
     catalogPath: required(env, "CATALOG_PATH"),
     tenantTokens: required(env, "TENANT_TOKENS"),
+    firecrawlApiKey: env.FIRECRAWL_API_KEY?.trim() || undefined,
     jwtSecret: jwtSecret(env),
     jwtTtlSeconds: optionalInt(env, "AUTH_JWT_TTL_SECONDS", 86_400),
     webDistPath: webDist === undefined || webDist === "" ? undefined : webDist,

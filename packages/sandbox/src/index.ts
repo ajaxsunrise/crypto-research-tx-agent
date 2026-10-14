@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 
 import { hashContent } from "@crypto/domain/internal";
 import { brand, type LeaseExecutor, type Timestamp } from "@crypto/domain/lease";
+import { Firecrawl } from "firecrawl";
 
 type StoredText = {
   hash: string;
@@ -56,8 +57,10 @@ function writeWorkspace(path: string, files: WorkspaceFiles): void {
 export function createSandbox(
   root?: string,
   now: () => Timestamp = () => brand(Date.now(), "Timestamp"),
+  firecrawlApiKey = process.env.FIRECRAWL_API_KEY,
 ): LeaseExecutor {
   const memory = new Map<string, WorkspaceFiles>();
+  const firecrawl = firecrawlApiKey ? new Firecrawl({ apiKey: firecrawlApiKey }) : undefined;
 
   function workspaceFiles(workspace: string): WorkspaceFiles {
     const existing = memory.get(workspace);
@@ -91,6 +94,46 @@ export function createSandbox(
     }
     if (lease.task.kind === "read") {
       return { kind: "failed", message: "Market data access is not configured." };
+    }
+    if (lease.task.kind === "web-search") {
+      if (firecrawl === undefined) {
+        return { kind: "failed", message: "FIRECRAWL_API_KEY is not configured." };
+      }
+      const result = await firecrawl.search(lease.task.query, {
+        limit: 5,
+        scrapeOptions: { formats: ["markdown"] },
+      });
+      return {
+        kind: "ok",
+        text: (result.web ?? [])
+          .map((page) => {
+            const metadata =
+              "metadata" in page && page.metadata !== undefined ? page.metadata : undefined;
+            const url =
+              "url" in page && typeof page.url === "string"
+                ? page.url
+                : (metadata?.sourceURL ?? metadata?.url ?? "");
+            const title =
+              "title" in page && typeof page.title === "string"
+                ? page.title
+                : (metadata?.title ?? url);
+            const content =
+              "markdown" in page && typeof page.markdown === "string"
+                ? page.markdown
+                : "description" in page && typeof page.description === "string"
+                  ? page.description
+                  : "";
+            return `## ${title}\n${url}\n${content}`;
+          })
+          .join("\n\n"),
+      };
+    }
+    if (lease.task.kind === "web-scrape") {
+      if (firecrawl === undefined) {
+        return { kind: "failed", message: "FIRECRAWL_API_KEY is not configured." };
+      }
+      const page = await firecrawl.scrape(lease.task.url, { formats: ["markdown"] });
+      return { kind: "ok", text: page.markdown ?? "" };
     }
     if (lease.effect.kind !== "idempotent-write") {
       return { kind: "failed", message: "Write lease is missing its content hash." };

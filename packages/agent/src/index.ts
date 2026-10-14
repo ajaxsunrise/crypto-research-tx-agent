@@ -36,7 +36,8 @@ export async function createResearchAgent(input?: {
     directory === undefined
       ? new MemoryStorage()
       : await openNodeSqliteStorage(join(directory, "session.sqlite"));
-  const sandbox = input?.sandbox ?? createSandbox(sandboxRoot, now);
+  const sandbox =
+    input?.sandbox ?? createSandbox(sandboxRoot, now, process.env.FIRECRAWL_API_KEY);
   return openAgent({
     storage,
     models: input?.models ?? builtinModels(),

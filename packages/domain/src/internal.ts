@@ -21,6 +21,14 @@ export function readIntent(symbol: string): ReplayableIntent {
   return { kind: "read", name: "read-market", symbol };
 }
 
+export function webSearchIntent(query: string): ReplayableIntent {
+  return { kind: "web-search", name: "web-search", query };
+}
+
+export function webScrapeIntent(url: string): ReplayableIntent {
+  return { kind: "web-scrape", name: "web-scrape", url };
+}
+
 export function writeIntent(path: string, content: string): ReplayableIntent {
   return {
     kind: "idempotent-write",

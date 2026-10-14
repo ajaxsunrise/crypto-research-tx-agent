@@ -81,9 +81,13 @@ export function recordingSandbox(
         }
       : lease.task.kind === "read"
         ? { kind: "ok", text: `market ${lease.task.symbol}` }
-        : lease.task.kind === "compute"
-          ? { kind: "ok", text: lease.task.code }
-          : { kind: "ok", text: lease.task.content },
+        : lease.task.kind === "web-search"
+          ? { kind: "ok", text: `web search ${lease.task.query}` }
+          : lease.task.kind === "web-scrape"
+            ? { kind: "ok", text: `web scrape ${lease.task.url}` }
+            : lease.task.kind === "compute"
+              ? { kind: "ok", text: lease.task.code }
+              : { kind: "ok", text: lease.task.content },
 ) {
   const leases: Lease[] = [];
   return {

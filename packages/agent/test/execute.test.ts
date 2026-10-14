@@ -307,6 +307,39 @@ test("a read-market call reads once through the sandbox and completes", async ()
   }
 });
 
+test("web research tools use replayable leases and return sandbox content", async () => {
+  const { leases, sandbox } = recordingSandbox();
+  const { models, model } = scripted([
+    call("web-search", { query: "BTC funding" }),
+    (context) => {
+      assert.equal(lastToolResultText(context), "web search BTC funding");
+      return call("read-webpage", { url: "https://example.com" });
+    },
+    (context) => {
+      assert.equal(lastToolResultText(context), "web scrape https://example.com");
+      return say("sources reviewed");
+    },
+  ]);
+  const agent = await createResearchAgent({ models, model, sandbox });
+  try {
+    const started = view(
+      await agent.execute({
+        kind: "start",
+        tenantId: tenant,
+        idempotencyKey: "web-research",
+        input: brief,
+      }),
+    );
+    assert.equal(started.status.kind, "completed");
+    assert.deepEqual(
+      leases.map((lease) => (lease.kind === "replayable" ? lease.task.kind : lease.kind)),
+      ["web-search", "web-scrape"],
+    );
+  } finally {
+    await agent.close();
+  }
+});
+
 test("place-order parks for approval and one grant sends it once", async () => {
   const { leases, sandbox } = recordingSandbox();
   const { models, model } = scripted([

@@ -19,6 +19,7 @@ const worker = await openAgentWorker({
   schema: config.schema,
   sandboxRoot: config.sandboxRoot,
   codeSandbox: config.codeSandbox,
+  firecrawlApiKey: config.firecrawlApiKey,
   model: config.defaultModel,
   models,
 });

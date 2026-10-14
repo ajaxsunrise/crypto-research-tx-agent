@@ -25,6 +25,14 @@ test("代码执行 sandbox 默认在主机上运行", () => {
   });
 });
 
+test("读取 Firecrawl API key 配置", () => {
+  assert.equal(
+    loadServerConfig({ ...base, FIRECRAWL_API_KEY: "fc-test-key" }).firecrawlApiKey,
+    "fc-test-key",
+  );
+  assert.equal(loadServerConfig({ ...base }).firecrawlApiKey, undefined);
+});
+
 test("docker 模式解析镜像与配额，缺少镜像直接失败", () => {
   assert.deepEqual(
     loadServerConfig({
