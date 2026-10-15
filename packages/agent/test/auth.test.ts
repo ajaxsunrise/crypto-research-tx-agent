@@ -60,7 +60,11 @@ test("tenant token configuration rejects invalid ids, weak tokens and duplicate 
     AUTH_JWT_SECRET: randomBytes(32).toString("hex"),
   };
   assert.throws(() => loadServerConfig(env), /TENANT_TOKENS/);
-  const withTokens = { ...env, TENANT_TOKENS: JSON.stringify({ alpha: token }) };
+  const withTokens = {
+    ...env,
+    TENANT_TOKENS: JSON.stringify({ alpha: token }),
+    AUTH_JWT_SECRET: "auth-test-secret-value-0123456789abcd",
+  };
   assert.equal(loadServerConfig(withTokens).tenantTokens, JSON.stringify({ alpha: token }));
 });
 

@@ -33,6 +33,11 @@ test("读取 Firecrawl API key 配置", () => {
   assert.equal(loadServerConfig({ ...base }).firecrawlApiKey, undefined);
 });
 
+test("读取 xapi API key 配置", () => {
+  assert.equal(loadServerConfig({ ...base, XAPI_API_KEY: "sk-test" }).xapiApiKey, "sk-test");
+  assert.equal(loadServerConfig({ ...base }).xapiApiKey, undefined);
+});
+
 test("读取项目技能目录配置并提供默认值", () => {
   assert.equal(loadServerConfig({ ...base }).skillsRoot, "./skills");
   assert.equal(

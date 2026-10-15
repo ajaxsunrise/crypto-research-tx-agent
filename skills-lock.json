@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "xapi": {
+      "source": "xapi-labs/xapi-cli",
+      "sourceType": "github",
+      "skillPath": "skills/xapi/SKILL.md",
+      "computedHash": "e1ddf331fe16a101911b37796b6fb2a2e97515faae647f7c7f8df0b7c107fcf1"
+    },
+    "xapi-provider": {
+      "source": "xapi-labs/xapi-cli",
+      "sourceType": "github",
+      "skillPath": "skills/xapi-provider/SKILL.md",
+      "computedHash": "754bcaf0051c4e47a5ec1218f85723a60b3d533ef24706acd1616fea5b724135"
+    },
+    "xapi-workers": {
+      "source": "xapi-labs/xapi-cli",
+      "sourceType": "github",
+      "skillPath": "skills/xapi-workers/SKILL.md",
+      "computedHash": "8f454b5bf84dddba73204cf82d9fdf3b951609449b83ac9c489b045efc31cff5"
+    }
+  }
+}

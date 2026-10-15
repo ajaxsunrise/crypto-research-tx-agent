@@ -10,12 +10,13 @@
 | 模块                        | 关键文件                    | 职责                                                                                                                                                                                                                                                                  |
 | --------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/domain`           | `lease.ts`、`internal.ts`   | 策略层，无 I/O。EffectClass（`read` / `idempotent-write` / `external` / `compute`）、Lease 类型族与构造函数、`AgentCommand`、`SessionView`、`executeLease` 的期限与取消语义                                                                                           |
-| `packages/sandbox`          | `index.ts`、`code.ts`       | LeaseExecutor 的实现。`index.ts` 提供 Firecrawl 网页搜索与 Markdown 页面读取，以及会话 workspace 的内容寻址存储（`write-note`）；`code.ts` 是代码执行 gateway（主机子进程 / docker 容器） |
+| `packages/sandbox`          | `index.ts`、`code.ts`       | LeaseExecutor 的实现。`index.ts` 提供 Firecrawl 网页搜索与 Markdown 页面读取，以及会话 workspace 的内容寻址存储（`write-note`）；`code.ts` 是代码执行 gateway（主机子进程 / docker 容器）                                                                             |
 | `packages/storage-postgres` | `database.ts`、`dialect.ts` | 把 pi-durable 的 `SqliteDatabase` facade 翻译到 Postgres（占位符、类型、`ON CONFLICT`），负责 schema 迁移与单写者 advisory lock                                                                                                                                       |
 | `packages/agent`            | `agent.ts`                  | 命令层：`start` / `reload` / `persist` / `resume` / `approve` / `cancel` 的全部状态转移，run 与 order 的持久状态，transcript 推导                                                                                                                                     |
-|                             | `research.ts`               | crypto-research 扩展（`web-search` / `read-webpage` / `read-market` / `write-note` / `place-order`）与全部 durable doc 定义                                                                                                                          |
+|                             | `research.ts`               | crypto-research 扩展（`web-search` / `read-webpage` / `read-market` / `write-note` / `place-order`）与全部 durable doc 定义                                                                                                                                           |
 |                             | `extensions/code.ts`        | code-execution 扩展（`run-bash` / `run-python`），构造 `compute` lease 交给 `createCodeSandbox`                                                                                                                                                                       |
 |                             | `skills.ts`                 | 扫描项目技能目录并提供 `list-skills` / `read-skill` 工具                                                                                                                                                                                                              |
+|                             | `extensions/xapi.ts`        | xapi 扩展（`xapi-get` / `xapi-call`）：worker 持有 `XAPI_API_KEY` 调用 `action.xapi.to`，只执行 GET 类 action                                                                                                                                                         |
 |                             | `worker.ts`、`open.ts`      | `openAgentWorker`（连接、锁、schema、扩展安装）与 `openAgent`（Harness、registry、模型解析、启动恢复）                                                                                                                                                                |
 |                             | `http/*`                    | Hono 服务：认证（`auth.ts`，静态 token + JWT）、注册与用户目录（`users.ts`，scrypt 密码散列）、AG-UI 输入解析（`parse-run.ts`）、SSE 事件流（`server.ts`、`events.ts`）、线程目录（`threads.ts`）、模型目录（`catalog.ts`）、配置（`config.ts`）、日志（`logger.ts`） |
 | `packages/web`              | `App.tsx`                   | React 页面：AG-UI 客户端，发送运行、轮询状态、展示审批按钮                                                                                                                                                                                                            |
@@ -62,7 +63,7 @@ flowchart TD
     end
     subgraph core["命令层 packages/agent"]
         AGENT["agent.ts<br/>六个命令与状态转移"]
-        REG["扩展 registry<br/>researchExtension + codeExtension + project-skills"]
+        REG["扩展 registry<br/>researchExtension + codeExtension + project-skills + xapi"]
     end
     subgraph dur["pi-durable"]
         H["Harness / Conversation"]
@@ -262,6 +263,12 @@ Markdown 页面内容，`read-webpage` 调用 Firecrawl Scrape。两种调用都
 `list-skills` 和 `read-skill` 提供给每个会话；指定 `crypto-research` 或 `code-execution` 时项目
 技能扩展仍然保留。
 
+`XAPI_API_KEY` 由 HTTP 服务读取并传给 xapi 扩展。`xapi-get` 读取一个 action 的实时 schema，
+`xapi-call` 执行 GET 类 action 并返回 provider 信封；两个工具都是全局扩展，任何扩展选择下都
+可用。key 只发给 `action.xapi.to`，模型与代码执行 sandbox 都接触不到它。Binance Web3 API 的
+action 以 `binance-web3-api.` 为前缀，全部服务共享每秒 10 次的调用上限，`code: 0` 表示成功，
+`40304`（地区限制）与 `40104`（权限不足）不重试。
+
 | 变量                                                               | 作用                                                          |
 | ------------------------------------------------------------------ | ------------------------------------------------------------- |
 | `HTTP_HOST` / `HTTP_PORT`                                          | 服务监听地址                                                  |
@@ -273,6 +280,7 @@ Markdown 页面内容，`read-webpage` 调用 Firecrawl Scrape。两种调用都
 | `CODE_SANDBOX_IMAGE` / `CODE_SANDBOX_MEMORY` / `CODE_SANDBOX_CPUS` | docker 模式的镜像与配额；镜像需预先 pull                      |
 | `DEFAULT_MODEL` / `CATALOG_PATH`                                   | 默认模型 id 与 `model_providers.json` 路径                    |
 | `FIRECRAWL_API_KEY`                                                | Firecrawl 网页搜索和 Markdown 页面读取的 API key              |
+| `XAPI_API_KEY`                                                     | xapi 动作网关的 API key，启用 `xapi-get` / `xapi-call`        |
 | `TENANT_TOKENS`                                                    | JSON，租户 id 到 Bearer token 的映射                          |
 | `AUTH_JWT_SECRET` / `AUTH_JWT_TTL_SECONDS`                         | 登录 JWT 的签名密钥（至少 32 字符）与有效期（秒，默认 86400） |
 | `WEB_DIST`                                                         | 编译后页面的目录，存在则由服务直接提供                        |

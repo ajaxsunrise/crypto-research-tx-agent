@@ -21,6 +21,7 @@ const worker = await openAgentWorker({
   skillsRoot: config.skillsRoot,
   codeSandbox: config.codeSandbox,
   firecrawlApiKey: config.firecrawlApiKey,
+  xapiApiKey: config.xapiApiKey,
   model: config.defaultModel,
   models,
 });

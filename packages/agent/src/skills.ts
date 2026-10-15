@@ -18,7 +18,8 @@ export async function discoverSkills(root: string): Promise<Skill[]> {
   const entries = await readdir(root, { withFileTypes: true });
   const skills: Skill[] = [];
   for (const entry of entries) {
-    if (!entry.isDirectory()) {
+    // skills CLI 安装的技能是指向 .agents/skills/ 的符号链接，同样参与发现。
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) {
       continue;
     }
     const directory = join(root, entry.name);

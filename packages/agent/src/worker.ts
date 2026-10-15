@@ -16,6 +16,7 @@ import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import pg from "pg";
 
 import { codeExtension } from "./extensions/code.js";
+import { xapiExtension } from "./extensions/xapi.js";
 import { openAgent, type ModelChoice, type OpenedAgent } from "./open.js";
 import { researchExtension } from "./research.js";
 import { skillsExtension } from "./skills.js";
@@ -43,6 +44,8 @@ export type AgentWorkerOptions = {
   sandbox?: LeaseExecutor;
   /** Firecrawl API key for web search and page reading. */
   firecrawlApiKey?: string;
+  /** xapi 动作网关的 API key；模型通过 xapi-get / xapi-call 工具使用它。 */
+  xapiApiKey?: string;
   /** 代码执行 sandbox 的运行方式；缺省在主机子进程执行。生产用 docker 隔离。 */
   codeSandbox?: CodeSandboxMode;
   settings?: HarnessSettings;
@@ -92,13 +95,14 @@ export async function openAgentWorker(options: AgentWorkerOptions): Promise<Agen
       codeExtension({ rootDir: options.sandboxRoot, mode: options.codeSandbox, now }),
     ];
     const projectSkills = await skillsExtension(options.skillsRoot ?? "./skills");
+    const xapi = xapiExtension({ apiKey: options.xapiApiKey });
 
     return await openAgent({
       storage,
       models,
       sandbox,
       extensions,
-      globalExtensions: [projectSkills],
+      globalExtensions: [projectSkills, xapi],
       model: options.model,
       now: options.now,
       settings: options.settings,

@@ -11,6 +11,7 @@ import {
   fauxText,
   fauxToolCall,
   type AssistantMessage,
+  type JsonObject,
   type MutableModels,
   type TranscriptContext,
 } from "@earendil-works/pi-ai";
@@ -47,7 +48,7 @@ export function scripted(
 
 export const say = (text: string): AssistantMessage => fauxAssistantMessage([fauxText(text)]);
 
-export const call = (name: string, args: Record<string, string>): AssistantMessage =>
+export const call = (name: string, args: JsonObject): AssistantMessage =>
   fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: "toolUse" });
 
 export function lastToolResultText(context: TranscriptContext): string {

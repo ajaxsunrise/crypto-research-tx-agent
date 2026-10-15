@@ -9,6 +9,7 @@ import { MemoryStorage, type HarnessSettings } from "@earendil-works/pi-durable"
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
 import { codeExtension } from "./extensions/code.js";
+import { xapiExtension } from "./extensions/xapi.js";
 import { openAgent, type ModelChoice, type OpenedAgent } from "./open.js";
 import { researchExtension } from "./research.js";
 import { skillsExtension } from "./skills.js";
@@ -27,6 +28,8 @@ export async function createResearchAgent(input?: {
   codeSandbox?: CodeSandboxMode;
   /** Project skill directories containing `SKILL.md`; defaults to `./skills`. */
   skillsRoot?: string;
+  /** xapi 动作网关的 API key；缺省读 XAPI_API_KEY 环境变量。 */
+  xapiApiKey?: string;
   settings?: HarnessSettings;
   resumeOnOpen?: boolean;
   now?: () => Timestamp;
@@ -36,6 +39,7 @@ export async function createResearchAgent(input?: {
   const clock = now ?? (() => Date.now() as Timestamp);
   const sandboxRoot = directory === undefined ? undefined : join(directory, "sandbox");
   const projectSkills = await skillsExtension(input?.skillsRoot ?? "./skills");
+  const xapi = xapiExtension({ apiKey: input?.xapiApiKey ?? process.env.XAPI_API_KEY });
   const storage =
     directory === undefined
       ? new MemoryStorage()
@@ -49,7 +53,7 @@ export async function createResearchAgent(input?: {
       researchExtension({ sandbox, now: clock }),
       codeExtension({ rootDir: sandboxRoot, mode: input?.codeSandbox, now: clock }),
     ],
-    globalExtensions: [projectSkills],
+    globalExtensions: [projectSkills, xapi],
     model: input?.model,
     now,
     settings: input?.settings,
